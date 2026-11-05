@@ -1,0 +1,80 @@
+# Config por defecto del asistente (modo terminal, PTT Ctrl+Shift+Space).
+
+persona: "samantha"
+
+audio:
+  input_device: null
+  output_device: null
+  sample_rate: 16000
+  blocksize: 1280
+  mic_gain: null
+  normalize: true
+  ptt_mode: "hold"
+  ptt_hotkey: "ctrl+shift+space"
+  continuous: false
+  continuous_tail_guard: 1.0
+
+vad:
+  threshold: 0.5
+  silence_duration: 0.9
+  rms_speech_threshold: 50
+  no_speech_timeout: 8.0
+  max_recording_duration: 30.0
+
+wakeword:
+  enabled: false
+  phrase: "Hola Samantha"
+  model: "vosk-model-small-es-0.42"
+
+stt:
+  model_size: "small"
+  language: "auto"
+  n_threads: 4
+  hotwords: []
+
+tts:
+  engine: "piper"
+  engines: {}
+  edge:
+    voices:
+      es: "es-CO-SalomeNeural"
+      en: "en-US-AriaNeural"
+    rate: "+0%"
+    pitch: "+0Hz"
+    volume: "+0%"
+    timeout: 10.0
+    trim_silence: true
+  fallback_engine: "piper"
+  fallback_cooldown: 30.0
+  models:
+    en: "en_US-amy-medium"
+  gain: 1.0
+  length_scale: 1.0
+  sentence_silence: 0.3
+
+ai:
+  default_backend: "go"
+  max_history: 20
+  turn_timeout: 30.0
+  max_tokens: 800
+  providers:
+    openai:
+      api_key: "${OPENAI_API_KEY}"
+      model: "gpt-4o"
+      base_url: "https://api.openai.com/v1"
+
+memory:
+  enabled: true
+  recent_window: 80
+
+skills:
+  enabled:
+    - notes
+
+ui:
+  orb: true
+
+logging:
+  level: "INFO"
+  console_level: "WARNING"
+  file: null

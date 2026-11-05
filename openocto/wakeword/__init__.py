@@ -1,0 +1,1 @@
+"""Wake word local (Vosk)."""

@@ -1,0 +1,63 @@
+### macOS
+.DS_Store
+._*
+Icon
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+### Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.so
+.venv/
+venv/
+env/
+
+### Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+### IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+### Project
+models/
+wheels/
+*.onnx
+*.bin
+*.ggml
+
+### Secrets
+.env
+config/local.yaml
+
+.claude
+CLAUDE.md
+plans
+
+# asistente: credenciales, logs y artefactos locales
+secret/
+logs/
+samples/
+.venv/
+
+# build portable
+dist/
+build/
+*.spec
+

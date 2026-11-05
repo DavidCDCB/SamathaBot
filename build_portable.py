@@ -46,6 +46,9 @@ SITEPKG = Path(
 HIDDEN = [
     "openocto.skills.notes",
     "openocto.skills.base",
+    "openocto.skills.web_search",
+    "openocto.skills.wikipedia",
+    "openocto.skills.open_search",
     "openocto.tts.piper",
     "openocto.tts.edge",
     "openocto.tts.fallback",
@@ -188,6 +191,8 @@ def main() -> int:
         "PIL",
         "--collect-all",
         "vosk",
+        "--collect-all",
+        "ddgs",
     ]
     for mod in HIDDEN:
         cmd += ["--hidden-import", mod]
@@ -257,11 +262,17 @@ def main() -> int:
 
 1) Valida la API key:      Samantha.exe check
 2) Si no hay key:          Samantha.exe key     (se guarda en secret\\)
-3) Arranca:                Samantha.exe start   (di "Hola Samantha" o pulsa
-                           Ctrl+Shift+Space; tras responder sigue escuchando)
+2b) Búsqueda web:          Samantha.exe key firecrawl
+                           (plan gratis: 1.000 créditos/mes; 10 req/min)
+                           (si se acaban los créditos, intenta DuckDuckGo)
+3) Arranca:                doble clic en Samantha.exe  (o Samantha.exe start)
+                           di "Hola Samantha" o pulsa Ctrl+Shift+Space;
+                           tras responder sigue escuchando
    Con debug en consola:   Samantha.exe start --debug
 4) Prueba la voz:          Samantha.exe say "Hola, soy Samantha"
 5) Latencia por turno:     Samantha.exe report
+6) Abrir una búsqueda:     "Abre Google y busca el clima en Bogotá"
+                           "Busca en YouTube música para estudiar"
 
 Config:    assistant-config.yaml  (en esta carpeta; edítalo y reinicia)
 Modelos:   models\\               (whisper, voces Piper, VAD Silero y Vosk)

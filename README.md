@@ -26,7 +26,7 @@ cd E:\NewBackup2\BackupCDCB\Algoritmos\protoPython\Assistant\octo
 
 python assistant.py key -y     # una sola vez: guarda la API key en secret\ (enmascarada)
 python assistant.py check      # de donde sale la key + prueba real contra Go
-python assistant.py start      # uso diario
+python assistant.py start      # uso diario (o sin comando)
 python assistant.py report     # latencia medida por turno desde el log
 python assistant.py say "Hola, soy Samantha"   # probar la voz configurada
 python assistant.py facts                # ver lo que Samantha aprendió de ti
@@ -95,14 +95,47 @@ models\               whisper + voces Piper + VAD Silero + Vosk
 LEEME.txt
 ```
 
-Uso: `Samantha.exe check` → `Samantha.exe key` (si falta) → `Samantha.exe start [--debug]`.
+Uso: `Samantha.exe check` → `Samantha.exe key` (si falta) → doble clic en `Samantha.exe` (equivale a `start [--debug]`).
 Para oir la voz sin hablarle: `Samantha.exe say "Hola, soy Samantha"`.
 Los datos se crean dentro de la carpeta: `data\history.db` y `logs\assistant.log`.
+
+Para la búsqueda web: `Samantha.exe key firecrawl` (plan gratuito de Firecrawl).
 
 `--with-key` copia la API key a `secret\` (**viaja con la carpeta: no compartas esa
 copia**). Sin esa opción, la key se crea con `Samantha.exe key`. Sigue necesitando
 internet para el LLM y para la voz Edge; sin red, Piper responde local. Si no
 llevas `models\`, se descargan en el primer arranque.
+
+### Buscar e informar
+
+Samantha puede buscar en la web y en Wikipedia por voz. Para la web usa
+Firecrawl, que tiene un plan gratuito de 1.000 créditos al mes (una búsqueda
+de 5 resultados cuesta 2 créditos y el límite es 10 solicitudes por minuto).
+
+1. Crea una cuenta en https://www.firecrawl.dev y copia la API key.
+2. Guárdala sin mostrarla: `Samantha.exe key firecrawl`.
+3. Prueba: "Busca en internet quién ganó el Balón de Oro 2026" o
+   "¿Qué es la fotosíntesis?".
+
+Wikipedia no necesita key. La respuesta es hablada, de 2 a 4 frases, y nombra
+la fuente sin leer URLs.
+
+Si Firecrawl responde 402 (sin créditos), Samantha intenta DuckDuckGo con
+`ddgs`, un scraper no oficial que puede fallar por CAPTCHA o límite y va contra
+los términos de uso de DuckDuckGo. En ese caso avisa y no inventa resultados.
+Para una alternativa oficial y más estable: Brave Search API (2.000 consultas
+gratis al mes) o link.sc (500).
+
+### Abrir búsquedas en Google o YouTube
+
+Samantha puede abrir el navegador predeterminado con una búsqueda ya hecha.
+No necesita key ni permisos especiales:
+
+- "Abre Google y busca el clima en Bogotá".
+- "Busca en YouTube música para estudiar".
+
+La skill `open_search` solo acepta Google o YouTube y codifica la consulta;
+no abre URLs arbitrarias ni ejecuta programas.
 
 ## Estructura
 
@@ -112,7 +145,7 @@ llevas `models\`, se descargan en el primer arranque.
 | `assistant-config.yaml` | **fuente de verdad**: voz, modelo, hotwords, ganancia |
 | `openocto/` | paquete (OpenOcto modificado: PTT por combo, memoria, TTS por frases) |
 | `personas/samantha/` | personaje: cálida, curiosa, breve, para leer en voz alta |
-| `secret/` | API key (gitignored; nunca al repo) |
+| `secret/` | API keys: OpenCode Go + Firecrawl (gitignored; nunca al repo) |
 | `samples/` | las 9 voces es en wav para audición |
 | `logs/assistant.log` | DEBUG: transcripciones y tiempos (aquí lee `report`) |
 | `config/` | defaults del upstream (`config/default.yaml`, base del merge) |

@@ -1098,8 +1098,30 @@ class OpenOctoApp:
             )
         else:
             print(ui.warn(f"\n  AI backend no responde: {msg}"))
-            print(ui.warn("   Puede que no pueda responder."))
-            print(ui.warn("   Revisa la API key y la red.\n"))
+            bajo = str(msg).lower()
+            if "reasoning effort" in bajo or "adaptive thinking" in bajo:
+                print(
+                    ui.warn(
+                        "   El modelo rechazó reasoning_effort: usa 'low' "
+                        "o comenta esa línea."
+                    )
+                )
+            elif "invalid params" in bajo or "bad_request" in bajo or "400" in bajo:
+                print(
+                    ui.warn(
+                        "   El proveedor rechazó parámetros del modelo "
+                        "(reasoning_effort, max_tokens o modelo)."
+                    )
+                )
+            elif "401" in bajo or "api key" in bajo or "unauthorized" in bajo:
+                print(ui.warn("   Revisa la API key."))
+            elif "timeout" in bajo or "connect" in bajo or "network" in bajo:
+                print(ui.warn("   Revisa la red y el tiempo de espera."))
+            else:
+                print(
+                    ui.warn("   Revisa la configuración del modelo, la key y la red.")
+                )
+            print()
 
         header = (
             f"{self._persona.display_name} {__version__} · "

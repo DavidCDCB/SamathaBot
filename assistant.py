@@ -2,7 +2,7 @@
 """Samantha - un solo acceso a todo el asistente, en Python puro.
 
 Desarrollo:
-    python assistant.py start [--debug]   # arrancar el asistente
+    python assistant.py start [--debug]   # arrancar (sin comando también arranca)
     python assistant.py key [-y]          # guardar la API key (enmascarada)
     python assistant.py check             # de donde sale la key + ping real a Go
     python assistant.py report            # latencia por turno desde el log
@@ -12,7 +12,8 @@ Desarrollo:
     python assistant.py orb               # prueba visual del orbe de estado
 
 Carpeta portable:
-    Samantha.exe start [--debug] | key | check | report | say "texto"
+    Samantha.exe [start] [--debug] | key | check | report | say "texto"
+    (doble clic en Samantha.exe equivale a `start`)
 
 No se imprimen claves nunca: longitudes y huellas SHA-256 (10 hex) nada mas.
 
@@ -48,6 +49,7 @@ CLI = "Samantha.exe" if FROZEN else "python assistant.py"
 CONFIG = ROOT / "assistant-config.yaml"
 KEY_NAME = "OPENCODE_GO_API_KEY"
 SECRET_FILE = ROOT / "secret" / "OPENCODE_GO_API_KEY"
+FIRECRAWL_SECRET = ROOT / "secret" / "FIRECRAWL_API_KEY"
 
 
 # ── bootstrap: si existe el venv y no estamos en el, re-ejecutar alli ────────
@@ -205,6 +207,10 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(f"  Guardala con:  {CLI} key")
         return 1
     os.environ[KEY_NAME] = r["valor"]
+    if FIRECRAWL_SECRET.exists():
+        fc = _clean(FIRECRAWL_SECRET.read_text(encoding="utf-8-sig", errors="replace"))
+        if fc:
+            os.environ["FIRECRAWL_API_KEY"] = fc
     print(
         f"  key   {r['fuente']}  |  {len(r['valor'])} chars  |  "
         f"huella {_huella(r['valor'])}"
@@ -225,6 +231,13 @@ def cmd_start(args: argparse.Namespace) -> int:
         return 2
 
     config = load_config(str(CONFIG))
+    if "web_search" in config.skills.enabled and not os.environ.get(
+        "FIRECRAWL_API_KEY"
+    ):
+        print(
+            "  aviso: sin FIRECRAWL_API_KEY; web_search queda desactivada "
+            f"({CLI} key firecrawl)"
+        )
     if getattr(args, "debug", False):
         os.environ["OCTO_DEBUG"] = "1"
         config.logging.console_level = "DEBUG"
@@ -251,7 +264,10 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 # ── key ──────────────────────────────────────────────────────────────────────
 def cmd_key(args: argparse.Namespace) -> int:
-    print("Pega aqui la key de OpenCode Go (no se ve al escribir):")
+    provider = getattr(args, "provider", "opencode")
+    secret_file = FIRECRAWL_SECRET if provider == "firecrawl" else SECRET_FILE
+    label = "Firecrawl" if provider == "firecrawl" else "OpenCode Go"
+    print(f"Pega aqui la key de {label} (no se ve al escribir):")
     txt = _clean(getpass.getpass("key: "))
     if not txt:
         print("No escribiste nada; no se guardo nada.")
@@ -260,14 +276,14 @@ def cmd_key(args: argparse.Namespace) -> int:
         print("La key contiene espacios internos (copiado mal). No se guardo nada.")
         return 1
 
-    SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    secret_file.parent.mkdir(parents=True, exist_ok=True)
     # utf-8 SIN BOM: un BOM corromperia la key y el 401 no diria por que
-    io.open(SECRET_FILE, "w", encoding="utf-8", newline="\n").write(txt)
+    io.open(secret_file, "w", encoding="utf-8", newline="\n").write(txt)
     try:
         subprocess.run(
             [
                 "icacls",
-                str(SECRET_FILE),
+                str(secret_file),
                 "/inheritance:r",
                 "/grant",
                 f"*{os.environ.get('USERNAME', '')}:F",
@@ -277,7 +293,13 @@ def cmd_key(args: argparse.Namespace) -> int:
         )
     except Exception:
         pass
-    print(f"guardada: {SECRET_FILE}  |  {len(txt)} chars  huella {_huella(txt)}")
+    print(f"guardada: {secret_file}  |  {len(txt)} chars  huella {_huella(txt)}")
+
+    if provider == "firecrawl":
+        if args.clear_registry:
+            print("aviso: -y solo aplica a la key de OpenCode Go.")
+        print(f"Comprueba:  {CLI} check")
+        return 0
 
     if args.clear_registry:
         try:
@@ -323,6 +345,17 @@ def cmd_key(args: argparse.Namespace) -> int:
 
 # ── check ────────────────────────────────────────────────────────────────────
 def cmd_check(args: argparse.Namespace) -> int:
+    print("=== firecrawl ===")
+    if FIRECRAWL_SECRET.exists():
+        fc = _clean(FIRECRAWL_SECRET.read_text(encoding="utf-8-sig", errors="replace"))
+        if fc:
+            print(f"  OK  {FIRECRAWL_SECRET}  |  {len(fc)} chars  huella {_huella(fc)}")
+        else:
+            print(f"  {FIRECRAWL_SECRET} existe pero esta VACIO")
+    else:
+        print(f"  falta -> {CLI} key firecrawl")
+    print()
+
     r = resolve_key()
     print("=== fuentes encontradas ===")
     if not r["fuentes"]:
@@ -599,7 +632,13 @@ def cmd_orb(args: argparse.Namespace) -> int:
     return 0
 
 
+def _argv_por_defecto(argv: list[str]) -> list[str]:
+    """Sin argumentos, el comando es start: doble clic en el .exe."""
+    return ["start", *argv] if not argv else argv
+
+
 def main() -> int:
+    sys.argv[1:] = _argv_por_defecto(sys.argv[1:])
     _ensure_venv()
     ap = argparse.ArgumentParser(
         prog=CLI,
@@ -615,6 +654,13 @@ def main() -> int:
     )
     p.set_defaults(fn=cmd_start)
     p = sub.add_parser("key", help="guardar la API key (enmascarada)")
+    p.add_argument(
+        "provider",
+        nargs="?",
+        choices=["opencode", "firecrawl"],
+        default="opencode",
+        help="qué credencial guardar (por defecto: opencode)",
+    )
     p.add_argument(
         "-y",
         "--clear-registry",

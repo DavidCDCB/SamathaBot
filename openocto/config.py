@@ -177,9 +177,20 @@ class MemoryConfig(BaseModel):
     notes_ttl_days: int = 14  # auto-resolve notes older than N days
 
 
+class FirecrawlConfig(BaseModel):
+    timeout: float = 15.0
+    max_results: int = 5
+    lang: str = "es"
+    country: str = "CO"
+    # "duckduckgo" usa ddgs solo si Firecrawl responde 402 (sin créditos).
+    fallback: str = "duckduckgo"
+    region: str = "co-es"
+
+
 class SkillsConfig(BaseModel):
     # Skills disponibles: ver openocto/skills/__init__.py (_SKILL_TABLE).
     enabled: list[str] = Field(default_factory=lambda: ["notes"])
+    firecrawl: FirecrawlConfig = Field(default_factory=FirecrawlConfig)
 
 
 class LoggingConfig(BaseModel):

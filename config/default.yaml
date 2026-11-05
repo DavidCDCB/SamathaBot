@@ -70,6 +70,16 @@ memory:
 skills:
   enabled:
     - notes
+    - web_search
+    - wikipedia
+    - open_search
+  firecrawl:
+    timeout: 15
+    max_results: 5
+    lang: "es"
+    country: "CO"
+    fallback: "duckduckgo"
+    region: "co-es"
 
 ui:
   orb: true

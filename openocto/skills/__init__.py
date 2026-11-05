@@ -10,6 +10,7 @@ Public API:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from openocto.skills.base import Skill, SkillError, SkillRegistry, SkillUnavailable
@@ -17,12 +18,17 @@ from openocto.skills.base import Skill, SkillError, SkillRegistry, SkillUnavaila
 if TYPE_CHECKING:
     from openocto.config import SkillsConfig
 
+logger = logging.getLogger(__name__)
+
 
 # Maps the config name -> import path -> class.  Lazy imports so a
 # missing optional dep (e.g. vlc bin) doesn't break the whole module
 # load — each skill handles its own availability check at __init__.
 _SKILL_TABLE: dict[str, tuple[str, str]] = {
     "notes": ("openocto.skills.notes", "NotesSkill"),
+    "web_search": ("openocto.skills.web_search", "WebSearchSkill"),
+    "wikipedia": ("openocto.skills.wikipedia", "WikipediaSkill"),
+    "open_search": ("openocto.skills.open_search", "OpenSearchSkill"),
 }
 
 
@@ -37,10 +43,15 @@ def build_default_registry(config: "SkillsConfig") -> SkillRegistry:
     registry = SkillRegistry()
     enabled = list(config.enabled)
     # Stable, dependency-aware order.
-    priority = {"notes": 0}
+    priority = {"notes": 0, "web_search": 1, "wikipedia": 2, "open_search": 3}
     enabled.sort(key=lambda n: priority.get(n, 99))
 
-    per_skill_config = {"notes": {}}
+    per_skill_config = {
+        "notes": {},
+        "web_search": config.firecrawl.model_dump(),
+        "wikipedia": {},
+        "open_search": {},
+    }
 
     for name in enabled:
         entry = _SKILL_TABLE.get(name)
@@ -52,7 +63,9 @@ def build_default_registry(config: "SkillsConfig") -> SkillRegistry:
             skill_cls = getattr(module, class_name)
         except Exception:
             continue
-        registry.try_register(skill_cls, per_skill_config.get(name, {}))
+        skill = registry.try_register(skill_cls, per_skill_config.get(name, {}))
+        if skill is None:
+            logger.warning("Skill %s no disponible; revisa su configuración", name)
 
     return registry
 

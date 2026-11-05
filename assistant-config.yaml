@@ -97,7 +97,7 @@ ai:
   # valor: el razonamiento cuenta dentro del tope.
   # Incluye razonamiento + respuesta. MiniMax M3.1 Flash puede gastar 400
   # tokens pensando y dejar el texto vacío; con 800 hay margen.
-  max_tokens: 1000
+  max_tokens: 4000
 
   providers:
     # Cualquier API compatible con OpenAI entra aquí:
@@ -111,7 +111,7 @@ ai:
       api_key: "${OPENCODE_GO_API_KEY}"
       # MODELO ACTIVO: cambia solo esta línea y reinicia. Después valida con
       #   python assistant.py check
-      model: "glm-5.3-flash"
+      model: "minimax-m3.1-flash"
       # El endpoint openai/v1 sirve para TODOS los modelos de texto de Go
       # (el gateway traduce a la API nativa de cada modelo).
       base_url: "https://opencode.ai/inference/go/openai/v1"
@@ -121,9 +121,11 @@ ai:
         # OpenOcto no inyecta id por conversación; valor fijo y estable.
         x-opencode-session: "octo-terminal-01"
       # Esfuerzo de razonamiento: SOLO algunos modelos lo respetan.
-      # Medido: deepseek-v4.1-flash sí (none -> 0 tokens de razonamiento;
-      # medium -> 39); glm-5.3-flash lo ignora. Vacío = no se envía.
-      # reasoning_effort: "none"
+      # MiniMax M3.1 Flash: low, medium, high, xhigh, max.
+      # "none", "auto" y "adaptive" dan HTTP 400; omitir equivale a max.
+      # Para voz, "low" es el más rápido. Con high/max sube max_tokens,
+      # porque el razonamiento cuenta dentro del tope.
+      reasoning_effort: "high"
 
       # ═══════════════════════════════════════════════════════════════════
       # MODELOS RECOMENDADOS (plan Go: $10/mes; el "límite" es el uso mensual
@@ -189,6 +191,16 @@ memory:
 skills:
   enabled:
     - notes
+    - web_search
+    - wikipedia
+    - open_search
+  firecrawl:
+    timeout: 15
+    max_results: 5
+    lang: "es"
+    country: "CO"
+    fallback: "duckduckgo"
+    region: "co-es"
 
 ui:
   # Orbe de estado: ventana pequeña que aparece al activar la conversación.

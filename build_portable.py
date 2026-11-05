@@ -54,6 +54,9 @@ HIDDEN = [
     "openocto.tts.edge",
     "openocto.tts.fallback",
     "openocto.stt.whisper_cpp",
+    "openocto.stt.faster_whisper",
+    "openocto.stt.fallback",
+    "openocto.stt.factory",
     "openocto.vad.silero",
     "openocto.vad.base",
     "openocto.wakeword.vosk_detector",
@@ -64,6 +67,7 @@ HIDDEN = [
     "openocto.audio.player",
     "openocto.utils.keyboard",
     "openocto.utils.console",
+    "openocto.utils.dates",
     "openocto.ui.orb",
     "openocto.utils.logging_setup",
     "openocto.utils.model_downloader",
@@ -122,6 +126,11 @@ def main() -> int:
         "--distpath",
         default=str(DIST),
         help="carpeta dist alternativa (util si dist\\Samantha esta abierta)",
+    )
+    ap.add_argument(
+        "--gpu",
+        action="store_true",
+        help="copiar cublas/cudnn del venv a cuda\\ (RTX: activa large en GPU)",
     )
     args = ap.parse_args()
 
@@ -194,6 +203,16 @@ def main() -> int:
         "vosk",
         "--collect-all",
         "ddgs",
+        "--collect-all",
+        "faster_whisper",
+        "--collect-all",
+        "ctranslate2",
+        "--collect-all",
+        "av",
+        "--collect-all",
+        "tokenizers",
+        "--collect-all",
+        "huggingface_hub",
     ]
     for mod in HIDDEN:
         cmd += ["--hidden-import", mod]
@@ -250,14 +269,48 @@ def main() -> int:
             else:
                 print(f"AVISO: falta {vm} (se descargara al primer arranque)")
 
-    if args.with_key:
-        key = ROOT / "secret" / "OPENCODE_GO_API_KEY"
-        if key.exists():
-            (APP / "secret").mkdir(exist_ok=True)
-            shutil.copy2(key, APP / "secret" / "OPENCODE_GO_API_KEY")
-            print("key copiada a secret\\ (OJO: viaja con la carpeta)")
+        fw = ROOT / "models" / "faster-whisper"
+        if not fw.exists() and final.exists():
+            fw = final / "models" / "faster-whisper"
+        if fw.exists():
+            shutil.copytree(fw, dst / "faster-whisper", dirs_exist_ok=True)
+            copied.append("faster-whisper")
         else:
-            print("AVISO: no hay secret\\OPENCODE_GO_API_KEY para copiar")
+            print(
+                "AVISO: falta models\\faster-whisper (se descargara al primer arranque)"
+            )
+
+    if args.gpu:
+        nvidia = SITEPKG / "nvidia"
+        if not nvidia.exists():
+            print("AVISO: --gpu necesita los paquetes nvidia-*-cu12 del venv")
+            print("       pip install nvidia-cublas-cu12 nvidia-cudnn-cu12")
+        else:
+            dstc = APP / "cuda"
+            dstc.mkdir(parents=True, exist_ok=True)
+            n_dlls = 0
+            total = 0
+            for dll in nvidia.rglob("*.dll"):
+                shutil.copy2(dll, dstc / dll.name)
+                n_dlls += 1
+                total += dll.stat().st_size
+            print(
+                f"GPU: {n_dlls} DLLs de CUDA copiadas a cuda\\ ({total / 1e6:.0f} MB)"
+            )
+
+    if args.with_key:
+        src = ROOT / "secret"
+        if (src / "OPENCODE_GO_API_KEY").exists() or (
+            src / "FIRECRAWL_API_KEY"
+        ).exists():
+            (APP / "secret").mkdir(exist_ok=True)
+            for kf in ("OPENCODE_GO_API_KEY", "FIRECRAWL_API_KEY"):
+                k = src / kf
+                if k.exists():
+                    shutil.copy2(k, APP / "secret" / kf)
+                    print(f"{kf} copiada a secret\\ (OJO: viaja con la carpeta)")
+        else:
+            print("AVISO: no hay keys en secret\\ (usa Samantha.exe key)")
 
     leeme = """Samantha — asistente de voz portable (Windows x64)
 
@@ -268,13 +321,21 @@ def main() -> int:
                            (si se acaban los créditos, intenta DuckDuckGo)
 3) Arranca:                doble clic en Samantha.exe  (segundo plano, sin terminal)
    Con terminal:           Samantha.exe --console
-                           di "Hola Samantha" o pulsa Ctrl+Shift+Space;
+                           Al arrancar te saluda sola (wakeword.greet_on_start;
+                           se desactiva poniendolo en false en el yaml).
+                           Luego di "Hola Samantha" o pulsa Ctrl+Shift+Space;
                            tras responder sigue escuchando
    Con debug en terminal:  Samantha.exe start --debug --console
 4) Prueba la voz:          Samantha.exe say "Hola, soy Samantha"
 5) Latencia por turno:     Samantha.exe report
 6) Abrir una búsqueda:     "Abre Google y busca el clima en Bogotá"
                            "Busca en YouTube música para estudiar"
+Modelo STT:                large-v3-turbo (primer arranque ~1.6 GB;
+                           fallback whisper.cpp base)
+GPU opcional:              sin CUDA, large corre en CPU int8 (mas lento).
+                           Para usar la RTX: compilar con --gpu lleva
+                           cublas/cudnn en cuda\\ y large usa la GPU.
+Latencia:                  si large tarda >4 s, los siguientes turnos usan base
 
 Para detener:              Ctrl+C si la abriste con --console;
                            o Administrador de tareas -> Samantha.exe

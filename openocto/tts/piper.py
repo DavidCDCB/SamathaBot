@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# En el .exe --windowed, el fallback CLI de Piper no debe abrir una consola.
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 class PiperTTSEngine(TTSEngine):
     """TTS engine using piper-tts.
@@ -43,15 +46,20 @@ class PiperTTSEngine(TTSEngine):
 
     def _load_python_api(self, model_path: Path, config_path: Path) -> None:
         from piper import PiperVoice
+
         self._voice = PiperVoice.load(str(model_path), config_path=str(config_path))
         # Read sample rate from the voice config
-        if hasattr(self._voice, "config") and hasattr(self._voice.config, "sample_rate"):
+        if hasattr(self._voice, "config") and hasattr(
+            self._voice.config, "sample_rate"
+        ):
             self._sample_rate = self._voice.config.sample_rate
 
     def synthesize(self, text: str) -> AudioSegment:
         """Synthesize text to speech."""
         if not text.strip():
-            return AudioSegment(audio=np.zeros(0, dtype=np.int16), sample_rate=self._sample_rate)
+            return AudioSegment(
+                audio=np.zeros(0, dtype=np.int16), sample_rate=self._sample_rate
+            )
 
         if self._voice is not None:
             return self._synthesize_python(text)
@@ -60,14 +68,20 @@ class PiperTTSEngine(TTSEngine):
     def _synthesize_python(self, text: str) -> AudioSegment:
         """Synthesize using the Python API."""
         from piper.config import SynthesisConfig
+
         syn_config = SynthesisConfig(length_scale=self._length_scale)
         chunks = list(self._voice.synthesize(text, syn_config=syn_config))
-        audio = np.concatenate([c.audio_int16_array for c in chunks]) if chunks else np.zeros(0, dtype=np.int16)
+        audio = (
+            np.concatenate([c.audio_int16_array for c in chunks])
+            if chunks
+            else np.zeros(0, dtype=np.int16)
+        )
         return AudioSegment(audio=audio, sample_rate=self._sample_rate)
 
     def _synthesize_cli(self, text: str) -> AudioSegment:
         """Synthesize using the piper CLI binary (fallback)."""
         import shutil
+
         piper_bin = shutil.which("piper") or shutil.which("piper-tts")
         if not piper_bin:
             raise RuntimeError(
@@ -78,13 +92,16 @@ class PiperTTSEngine(TTSEngine):
         result = subprocess.run(
             [
                 piper_bin,
-                "--model", str(self._model_path),
+                "--model",
+                str(self._model_path),
                 "--output-raw",
-                "--length-scale", str(self._length_scale),
+                "--length-scale",
+                str(self._length_scale),
             ],
             input=text.encode("utf-8"),
             capture_output=True,
             timeout=30,
+            creationflags=_CREATE_NO_WINDOW,
         )
 
         if result.returncode != 0:

@@ -25,12 +25,24 @@ wakeword:
   enabled: false
   phrase: "Hola Samantha"
   model: "vosk-model-small-es-0.42"
+  # true = al arrancar envia la frase al modelo y Samantha saluda sola.
+  greet_on_start: false
 
 stt:
-  model_size: "small"
+  engine: "faster_whisper"
+  fallback_engine: "whisper_cpp"
+  fallback_after_ms: 4000
+  model_size: "base"
   language: "auto"
   n_threads: 4
   hotwords: []
+  faster_whisper:
+    model: "large-v3-turbo"
+    device: "auto"
+    compute_type: "default"
+    beam_size: 5
+    download_root: "models/faster-whisper"
+    cuda_dll_dirs: []
 
 tts:
   engine: "piper"

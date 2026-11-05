@@ -38,13 +38,34 @@ wakeword:
   model: "vosk-model-small-es-0.42"
   no_speech_timeout: 8.0   # si no hablas en N s, cancela la toma
   max_recording_duration: 30.0  # tope duro aunque haya ruido
+  # Al arrancar (también el .exe en segundo plano), envía "hola samantha"
+  # al modelo como si la hubieras dicho: Samantha responde y se queda
+  # escuchando. false = esperar a la wake word o al atajo.
+  greet_on_start: true
+  greet_text: ""        # vacío = usar la phrase de arriba
+  greet_delay: 1.5      # segundos tras "Conexión OK"
 
 stt:
+  # Motor principal: large-v3-turbo local. Fallback: whisper.cpp base.
+  engine: "faster_whisper"
+  fallback_engine: "whisper_cpp"
+  # Si large tarda más de 4 s, los siguientes turnos usan whisper.cpp base.
+  # 0 desactiva este cambio por latencia.
+  fallback_after_ms: 4000
   # Medido: base = mismo CER que small (2,5%) a un tercio del tiempo.
   model_size: "base"
   language: "es"
-  hotwords: ["Bogota"]    # nombres toponimos que Whisper debe preferir
+  hotwords: ["Bogota", "Samantha"]
   n_threads: 8
+  faster_whisper:
+    model: "large-v3-turbo"
+    device: "auto"          # auto intenta CUDA y cae a CPU int8
+    compute_type: "default"
+    beam_size: 5
+    download_root: "models/faster-whisper"
+    # Opcional: carpetas con cublas64_12.dll/cudnn64_9.dll para CUDA.
+    # Vacío = auto: busca cuda\ junto al .exe y los paquetes nvidia del venv.
+    cuda_dll_dirs: []
 
 tts:
   # Motor de voz:
@@ -125,7 +146,7 @@ ai:
       # "none", "auto" y "adaptive" dan HTTP 400; omitir equivale a max.
       # Para voz, "low" es el más rápido. Con high/max sube max_tokens,
       # porque el razonamiento cuenta dentro del tope.
-      reasoning_effort: "low"
+      reasoning_effort: "high"
 
       # ═══════════════════════════════════════════════════════════════════
       # MODELOS RECOMENDADOS (plan Go: $10/mes; el "límite" es el uso mensual

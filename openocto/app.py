@@ -19,6 +19,7 @@ from openocto.persona.manager import Persona, PersonaManager
 from openocto.skills import SkillRegistry, build_default_registry
 from openocto.state_machine import State, StateMachine
 from openocto.utils import console as ui
+from openocto.utils.dates import fecha_es, hora_es
 from openocto.utils.icons import (
     CHECK,
     CROSS,
@@ -121,6 +122,9 @@ class OpenOctoApp:
         # P22: si el STT entrega la misma frase dos veces seguidas, no repetir turno
         self._last_user_text = ""
         self._last_user_at = 0.0
+        # Texto sintético que _handle_audio usa como "transcripción" (saludo).
+        self._pending_text = None
+        self._greet_task = None
         self._instance_lock = None
         # P23: preguntar el nombre una vez al inicio si aún no está en memoria
         self._name_unknown = False
@@ -225,13 +229,14 @@ class OpenOctoApp:
         """Initialize heavy components (downloads models if needed)."""
         print(ui.dim(f"{WRENCH} Preparando modelos y audio..."))
 
-        # STT
+        # STT: faster-whisper grande + fallback whisper.cpp
         try:
-            from openocto.stt.whisper_cpp import WhisperCppEngine
+            from openocto.stt.factory import create_stt_engine
 
-            self._stt = WhisperCppEngine(self._config.stt)
-        except ImportError:
-            print(ui.warn("  pywhispercpp no instalado: STT no disponible."))
+            self._stt = create_stt_engine(self._config.stt)
+        except Exception as exc:
+            logger.exception("STT no disponible")
+            print(ui.warn(f"  STT no disponible: {exc}"))
             print(ui.dim("   pip install -e .[audio]\n"))
 
         # Persona
@@ -803,6 +808,14 @@ class OpenOctoApp:
 
         await self._handle_audio(audio)
 
+    def _fecha_block(self) -> str:
+        """Fecha/hora reales para el system prompt (el modelo no las sabe)."""
+        return (
+            "\n\n## Fecha y hora actuales\n"
+            f"Hoy es {fecha_es()}, hora local {hora_es()} (zona de Bogotá). "
+            "Usa esto para 'hoy', 'ayer' o 'mañana'; no lo busques en la web."
+        )
+
     async def _handle_audio(self, audio) -> None:
         """Run the full pipeline: transcribe → AI → TTS."""
         self._processing = True
@@ -811,15 +824,21 @@ class OpenOctoApp:
             # Transcribe
             await self._state_machine.transition("stop_recording")
             self._orb.state("transcribing")
-            if self._stt is None:
+            pending = self._pending_text
+            self._pending_text = None
+            if pending is not None:
+                # Turno inyectado por texto (saludo de arranque): no hubo audio.
+                result = pending
+            elif self._stt is None:
                 self._conversation_active = False
                 print(ui.warn("  STT no disponible: pip install -e .[audio]"))
                 await self._state_machine.transition("cancel")
                 self._orb.end()
                 return
-            print(ui.dim(f"{WRENCH} Transcribiendo..."), end="\r", flush=True)
-            result = await asyncio.to_thread(self._stt.transcribe, audio)
-            ui.clear_line()
+            else:
+                print(ui.dim(f"{WRENCH} Transcribiendo..."), end="\r", flush=True)
+                result = await asyncio.to_thread(self._stt.transcribe, audio)
+                ui.clear_line()
 
             if not result.text.strip():
                 self._conversation_active = False
@@ -879,6 +898,10 @@ class OpenOctoApp:
                     persona_name,
                     limit=self._config.ai.max_history,
                 )
+
+            # La IA no sabe qué día es: sin esto, "hoy" es alucinación o una
+            # búsqueda web innecesaria (MiniMax respondió "24 de marzo").
+            system_prompt += self._fecha_block()
 
             # P23: al inicio, si no hay nombre, pedirlo en voz alta una vez.
             if self._name_unknown and not self._name_asked:
@@ -1033,9 +1056,56 @@ class OpenOctoApp:
         finally:
             self._processing = False
 
+    async def _inject_text(self, text: str) -> None:
+        """Turno sin micro: lleva un texto al modelo como si fuera una
+        transcripcion del usuario (saludo de arranque)."""
+        if self._processing or self._state_machine.state != State.IDLE:
+            return
+        if not text.strip():
+            return
+
+        # Como al despertar: pausa Vosk y abre la conversacion continua.
+        if self._wakeword is not None:
+            self._wakeword.pause()
+        self._name_asked = False
+        self._conversation_active = bool(
+            self._config.audio.continuous and self._ptt_mode == "vad"
+        )
+
+        from openocto.stt.base import TranscriptionResult
+
+        lang = self._config.stt.language
+        if not lang or lang == "auto":
+            lang = "es"
+        self._pending_text = TranscriptionResult(
+            text=text, language=lang, confidence=1.0, duration_ms=0.0
+        )
+        # _handle_audio consume _pending_text en lugar de transcribir.
+        # El orbe solo aparece con show(); este camino no pasa por
+        # _start_recording, así que lo mostramos aquí (igual que el primer
+        # turno normal) para que el transcribing/thinking/speaking se vean.
+        self._orb.show()
+        await self._state_machine.transition("start_recording")
+        await self._handle_audio(np.zeros(0, dtype=np.int16))
+
+    async def _auto_greet(self) -> None:
+        """Tras el arranque, saluda: inyecta la frase al modelo para que
+        Samantha responda y la conversacion quede abierta."""
+        cfg = self._config.wakeword
+        try:
+            await asyncio.sleep(max(0.0, float(cfg.greet_delay)))
+        except asyncio.CancelledError:
+            return
+        text = (cfg.greet_text or cfg.phrase or "Hola Samantha").strip()
+        logger.info("Saludo de arranque: %r", text)
+        await self._inject_text(text)
+
     def _cleanup(self) -> None:
         """Nada de larga vida que detener en el modo terminal."""
         self._abort_tts()
+        if self._greet_task is not None and not self._greet_task.done():
+            self._greet_task.cancel()
+        self._greet_task = None
         if self._wakeword_guard_task is not None:
             self._wakeword_guard_task.cancel()
             self._wakeword_guard_task = None
@@ -1161,10 +1231,13 @@ class OpenOctoApp:
             if self._ptt_mode == "vad" and self._config.audio.continuous
             else ""
         )
+        # El oído real lo describe el motor cargado (large GPU/CPU o base),
+        # no la config estática: si CUDA falló, aquí se ve "CPU int8".
+        _oido = getattr(self._stt, "describe", None)
+        oido = _oido() if callable(_oido) else f"whisper {self._config.stt.model_size}"
         print(
             ui.dim(
-                f"   voz {engine} {voice}{rate} · oído whisper "
-                f"{self._config.stt.model_size} · {mode} "
+                f"   voz {engine} {voice}{rate} · oído {oido} · {mode} "
                 f"{self._config.vad.silence_duration:.1f}s{conv}"
             )
         )
@@ -1189,6 +1262,8 @@ class OpenOctoApp:
         self._orb.start()
         self._start_wakeword()
         listener.start()
+        if self._config.wakeword.greet_on_start:
+            self._greet_task = asyncio.create_task(self._auto_greet())
         try:
             while True:
                 await asyncio.sleep(0.1)

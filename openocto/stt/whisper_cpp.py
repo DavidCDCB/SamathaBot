@@ -40,24 +40,25 @@ def _silence_c_stderr():
         os.close(saved_fd)
         os.close(devnull_fd)
 
+
 # Whisper hallucinates on silence/noise — filter these out.
 # Patterns cover common hallucinations in English, Russian, and other languages.
 _HALLUCINATION_RE = re.compile(
-    r"^[\s\*\[\(]*"           # leading whitespace, *, [, (
+    r"^[\s\*\[\(]*"  # leading whitespace, *, [, (
     r"("
-    r"\[.*?\]"                # [sound of door], [music], [applause], [звук двери], [музыка]
-    r"|\(.*?\)"               # (music), (silence), (музыка), (тишина)
-    r"|\*.*?\*"               # *show*, *sound*, *показать*, *звук*
-    r"|subtitl\w*"            # subtitles, subtitle
-    r"|субтитр\w*"            # субтитры (Russian: subtitles)
-    r"|продолжение следует"   # Russian: to be continued
+    r"\[.*?\]"  # [sound of door], [music], [applause], [звук двери], [музыка]
+    r"|\(.*?\)"  # (music), (silence), (музыка), (тишина)
+    r"|\*.*?\*"  # *show*, *sound*, *показать*, *звук*
+    r"|subtitl\w*"  # subtitles, subtitle
+    r"|субтитр\w*"  # субтитры (Russian: subtitles)
+    r"|продолжение следует"  # Russian: to be continued
     r"|to\s*be\s*continued"
     r"|thank\s*you\s*(for\s*watching)?"
     r"|please\s*(like|subscribe|share)"
     r"|don'?t\s*forget\s*to"
-    r"|подписывайтесь"        # Russian: subscribe
+    r"|подписывайтесь"  # Russian: subscribe
     r")"
-    r"[\s\.\,\!\*\]\)]*$",   # trailing junk
+    r"[\s\.\,\!\*\]\)]*$",  # trailing junk
     re.IGNORECASE,
 )
 
@@ -67,6 +68,7 @@ class WhisperCppEngine(STTEngine):
 
     def __init__(self, config: STTConfig | None = None) -> None:
         model_size = config.model_size if config else "small"
+        self._model_size = model_size
         n_threads = config.n_threads if config else 4
         language = config.language if config else "auto"
 
@@ -80,15 +82,25 @@ class WhisperCppEngine(STTEngine):
         logger.info("Loading Whisper model: %s", model_path)
 
         from pywhispercpp.model import Model
+
         with _silence_c_stderr():
-            self._model = Model(str(model_path), n_threads=n_threads, print_progress=False)
+            self._model = Model(
+                str(model_path), n_threads=n_threads, print_progress=False
+            )
 
         logger.info("Whisper model loaded")
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> TranscriptionResult:
+    def describe(self) -> str:
+        return f"whisper.cpp {self._model_size}"
+
+    def transcribe(
+        self, audio: np.ndarray, sample_rate: int = 16000
+    ) -> TranscriptionResult:
         """Transcribe audio to text with automatic language detection."""
         if audio.size == 0:
-            return TranscriptionResult(text="", language="en", confidence=0.0, duration_ms=0.0)
+            return TranscriptionResult(
+                text="", language="en", confidence=0.0, duration_ms=0.0
+            )
 
         # whisper.cpp expects float32 normalized to [-1.0, 1.0]
         if audio.dtype == np.int16:
@@ -135,6 +147,7 @@ class WhisperCppEngine(STTEngine):
             # pywhispercpp >= 1.3 exposes this via the model params
             lang_id = self._model.context.full_lang_id()
             from pywhispercpp import LANGUAGES
+
             return LANGUAGES.get(lang_id, "en")
         except Exception:
             return "en"

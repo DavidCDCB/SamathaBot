@@ -2,272 +2,338 @@
 
 Asistente local de voz con el personaje de **Samantha** (inspirado en la IA de
 la película *Her*): cálida, curiosa y emocionalmente presente. **Solo terminal**:
-sin interfaz web. Se activa con **Ctrl+Shift+Space** o diciendo
-**“Hola Samantha”**:
-una pulsación inicia una conversación; hablas, la toma se cierra al detectar
-silencio, Samantha responde y **vuelve a escuchar sola** para tu siguiente
-frase. Si callas `vad.no_speech_timeout` segundos, la conversación termina; una
-segunda pulsación también la termina. En `ptt_mode: hold` mantienes la
-combinación mientras hablas. El turno se procesa con STT → memoria → LLM →
-Edge TTS (Piper de respaldo).
+sin interfaz web. Se activa con **Ctrl+Shift+Space**, diciendo
+**“Hola Samantha”**, o sola al arrancar (saludo inicial).
+
+Hablas, la toma se cierra al detectar silencio, Samantha responde por voz y
+**vuelve a escuchar sola** para tu siguiente frase. Si callas
+`vad.no_speech_timeout` segundos, la conversación termina; una segunda pulsación
+del atajo también la termina.
 
 ```
-Ctrl+Shift+Space (pulsar) -> Silero VAD corta al callar -> whisper.cpp (es + hotwords)
-   -> memoria SQLite/FTS5
-   -> OpenCode Go (glm-5.3-flash, streaming) -> Edge TTS frase a frase
-   -> (sin red: Piper local) -> altavoz
-   -> continuous: reabre el micro y repite (fin: silencio N s o 2a pulsacion)
+Micrófono -> Silero VAD (corta al callar) -> conversación continua
+  -> faster-whisper large-v3-turbo (GPU CUDA o CPU int8)
+     -> fallback: whisper.cpp base
+  -> memoria SQLite + fecha/hora real del turno
+  -> OpenCode Go (streaming + tools: notas, web, Wikipedia, abrir búsquedas)
+  -> Edge TTS frase a frase -> fallback Piper local -> altavoz
+  -> reabre el micrófono (continuous)
 ```
+
+## Novedades (2026-11)
+
+- **STT grande local:** `large-v3-turbo` (~1,6 GB) con GPU CUDA real y caída
+  automática a CPU `int8` y al `whisper.cpp base`.
+- **Fallback por latencia:** si un turno con el modelo grande tarda más de 4 s,
+  los siguientes usan `base` sin reiniciar.
+- **Saludo de arranque:** al abrir el `.exe` Samantha te habla primero y deja
+  la conversación abierta (incluido el orbe).
+- **Fecha y hora reales** inyectadas en cada turno (sin búsquedas ni fechas
+  alucinadas; nada quemado en el prompt).
+- **Búsqueda robusta:** Firecrawl con validación de formato de la key y
+  respaldo DuckDuckGo también ante `401` (key inválida), no solo `402`.
+- **Portable:** `build_portable.py --gpu` incluye las DLLs de CUDA;
+  `--with-key` copia OpenCode **y** Firecrawl.
+
+## Requisitos
+
+| Requisito | Detalle |
+|---|---|
+| Windows 10/11 **x64** | Único sistema soportado por el `.exe` |
+| Python 3.10–3.12 | Solo para desarrollo (el portable no lo necesita) |
+| Internet | LLM OpenCode Go, Edge TTS y Firecrawl; sin red, Piper es local |
+| GPU NVIDIA (opcional) | RTX 4050 probada; sin GPU, `large` corre en CPU int8 |
+| ~8 GB RAM | Recomendado para el modelo grande en CPU |
+
+## Instalación (desarrollo)
+
+```powershell
+cd E:\NewBackup2\BackupCDCB\Algoritmos\protoPython\Assistant\octo
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[audio]"
+
+python assistant.py key      # guarda la key de OpenCode Go (enmascarada)
+python assistant.py check    # origen de la key + ping real al backend
+python assistant.py start    # uso diario (sin comando también arranca)
+```
+
+`python` puede ser cualquiera: `assistant.py` se auto-relanza contra `.venv`.
+
+### GPU NVIDIA sin instalar el CUDA Toolkit
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+```
+
+La app registra esas carpetas (más `cuda\` junto al `.exe` y
+`stt.faster_whisper.cuda_dll_dirs`) en el `PATH` del proceso, que es lo que
+`ctranslate2` necesita para cargar `cublas64_12.dll` / `cudnn64_9.dll`.
+Verificación: el banner debe decir
+`oído faster-whisper large-v3-turbo (GPU …)`. Si dice `CPU int8`, revisa
+`logs\assistant.log` (la causa exacta aparece en el WARNING).
 
 ## Uso
 
 ```powershell
-cd E:\NewBackup2\BackupCDCB\Algoritmos\protoPython\Assistant\octo
-
-python assistant.py key -y     # una sola vez: guarda la API key en secret\ (enmascarada)
-python assistant.py check      # de donde sale la key + prueba real contra Go
-python assistant.py start      # uso diario (o sin comando)
-python assistant.py report     # latencia medida por turno desde el log
-python assistant.py say "Hola, soy Samantha"   # probar la voz configurada
-python assistant.py facts                # ver lo que Samantha aprendió de ti
-python assistant.py facts delete 3 4     # borrar hechos por id (ver facts)
+python assistant.py start [--debug]   # arranca (DEBUG en consola)
+python assistant.py key [-y]          # OpenCode Go
+python assistant.py key firecrawl     # Firecrawl (búsqueda web)
+python assistant.py check             # keys + ping real + formato Firecrawl
+python assistant.py report            # latencia por turno desde el log
+python assistant.py say "Hola"        # probar la voz configurada
+python assistant.py facts             # ver lo que Samantha aprendió
+python assistant.py facts delete 3 4  # borrar hechos por id
+python assistant.py orb               # prueba visual del orbe
 ```
 
-Con el asistente corriendo: pulsa **Ctrl+Shift+Space** una vez y conversa. Habla,
-espera la respuesta y sigue hablando sin volver a pulsar: tras responder, el
-micrófono se reabre solo. Si callas 8 s, la conversación termina; una segunda
-pulsación también la termina. En `audio.ptt_mode: "hold"` se mantiene el
-comportamiento clásico de mantener la combinación. Escucharás un chime al abrir
-y otro al cerrar cada toma. `Ctrl+C` para salir.
-El atajo es **global**: funciona con la ventana del asistente en segundo plano. Se cambia en `audio.ptt_hotkey` (por defecto `ctrl+shift+space`).
-`python` puede ser cualquiera: el script se auto-relanza contra `.venv`.
+Con el asistente corriendo: pulsa **Ctrl+Shift+Space** una vez y conversa.
+Habla, espera la respuesta y sigue hablando sin volver a pulsar: tras responder,
+el micrófono se reabre solo (chime al abrir y al cerrar cada toma).
+`Ctrl+C` para salir.
 
-- Al activar la conversación aparece un orbe de colores (ventana pequeña que se puede arrastrar) con el estado: esperando tu voz, escuchándote, transcribiendo, pensando, hablando. Se desactiva con `ui.orb: false`. Prueba visual sin micrófono: `python assistant.py orb`.
-- `--debug` en `start` muestra DEBUG en la consola (por defecto la consola solo
-  enseña avisos; el archivo `logs\assistant.log` guarda DEBUG siempre).
-- La conversación va coloreada: **Tú** en cian, **Samantha** en verde, avisos en
-  amarillo y errores en rojo. `NO_COLOR=1` desactiva el color.
+- El atajo es **global** (funciona en segundo plano) y se cambia en
+  `audio.ptt_hotkey`.
+- El **orbe** aparece al activar la conversación y se puede arrastrar; muestra
+  esperando/escuchando/transcribiendo/pensando/hablando. Se desactiva con
+  `ui.orb: false`.
+- La conversación va coloreada (Tú en cian, Samantha en verde); `NO_COLOR=1`
+  la deja sin color.
 
-## Wake word: “Hola Samantha”
+## Activación: atajo, wake word y saludo
 
-Con `wakeword.enabled: true` el micrófono queda abierto y **Vosk** escucha
-localmente la frase (no sale audio a la nube):
+### Atajo y VAD
 
-1. Di **“Hola Samantha”**.
-2. Espera el chime.
-3. Habla con normalidad; el VAD cierra la toma al callar.
+- `audio.ptt_mode: "vad"` (recomendado): una pulsación empieza a escuchar; el
+  silencio cierra la toma (`vad.silence_duration: 0.9` s). Otra pulsación
+  termina la conversación.
+- `audio.ptt_mode: "hold"`: mantienes la combinación mientras hablas.
+- `audio.continuous: true` reabre el micro tras cada respuesta;
+  `continuous_tail_guard` (1.0 s) espera a que muera el eco del TTS.
 
-El detector se pausa mientras Samantha graba, piensa o habla, para no
-despertarse con su propia voz. El atajo global sigue funcionando como respaldo.
-El modelo español pequeño ocupa ~38 MB comprimido (~58 MB en disco) y se descarga la primera vez en
-`~\.openocto\models\vosk\` (en el portable, `models\vosk\`).
+### Wake word “Hola Samantha”
+
+Con `wakeword.enabled: true` el micrófono queda abierto y **Vosk** escucha la
+frase localmente (el audio no sale a la nube). El detector se pausa mientras
+Samantha graba, piensa o habla, para no despertarse con su propia voz.
 
 ```yaml
 wakeword:
   enabled: true
-  phrase: "Hola Samantha"
-  model: "vosk-model-small-es-0.42"
+  phrase: "hola samantha"
+  model: "vosk-model-small-es-0.42"   # ~38 MB comprimido
 ```
 
 Si dices la frase y la orden en la misma respiración, la orden puede empezar
-antes del chime; espera el tono para que no se pierda la primera palabra.
+antes del chime; espera el tono para no perder la primera palabra.
+
+### Saludo de arranque
+
+```yaml
+wakeword:
+  greet_on_start: true   # saluda solo al iniciar (también el .exe)
+  greet_text: ""         # vacío = usa la phrase ("hola samantha")
+  greet_delay: 1.5       # segundos tras "Conexión OK"
+```
+
+Samantha recibe la frase como si la hubieras dicho: responde por voz, muestra
+el orbe y (en modo continuo) se queda escuchando. Si aún no sabe tu nombre, te
+lo pregunta en ese primer turno. `greet_on_start: false` vuelve al
+comportamiento clásico (wake word o atajo).
+
+## Modelo de voz local (STT)
+
+| Pieza | Detalle |
+|---|---|
+| Principal | `faster-whisper` `large-v3-turbo` (~1,6 GB, CTranslate2) |
+| GPU | CUDA 12 + cuDNN 9 + cuBLAS (vía pip o `cuda\` en el portable) |
+| CPU | `int8` automático si CUDA no está operativo |
+| Fallback | `whisper.cpp base` (rápido, ~0,75 s medido) |
+| Fallback por latencia | turno > `fallback_after_ms` (4 s) → siguientes con `base` |
+
+```yaml
+stt:
+  engine: "faster_whisper"
+  fallback_engine: "whisper_cpp"
+  fallback_after_ms: 4000     # 0 desactiva el cambio por latencia
+  model_size: "base"          # modelo del fallback whisper.cpp
+  language: "es"
+  hotwords: ["Bogota", "Samantha"]
+  n_threads: 8
+  faster_whisper:
+    model: "large-v3-turbo"
+    device: "auto"            # auto | cuda | cpu
+    compute_type: "default"   # float16/int8_float16/int8…
+    beam_size: 5              # 1 = más rápido en CPU
+    download_root: "models/faster-whisper"
+    cuda_dll_dirs: []         # carpetas extra con cublas/cudnn
+```
+
+- El modelo grande se descarga en `models/faster-whisper` (desarrollo:
+  `octo\models\faster-whisper`; portable: junto al `.exe`).
+- Sin terminal no se ve el progreso de descarga: usa `--console` o mira
+  `logs\assistant.log`.
+- La primera inferencia en GPU se “calienta” al cargar (1 s de silencio). Si
+  falta `cublas64_12.dll`, el motor detecta el fallo, recarga en CPU y sigue.
+- El cambio por latencia es **permanente durante la sesión**: si instalas CUDA
+  y quieres volver a probar el modelo grande, reinicia Samantha.
+
+## Voz (TTS)
+
+- `tts.engine: "edge"` → voz neuronal de Microsoft
+  (`es-CO-SalomeNeural`, `rate: +25%`), con **Piper local de respaldo**
+  (`es_MX-claude-high`). Requiere internet; el texto de las respuestas se envía
+  a Microsoft.
+- Edge agrega ~0,7 s de silencio por frase: `trim_silence: true` lo recorta y
+  deja solo `sentence_silence` (0,25 s).
+- **Pipeline frase a frase:** la frase N+1 se sintetiza mientras suena la N;
+  el playback arranca antes y los puntos ya no dejan silencios largos.
+- `gain: 1.6` (~+4 dB) con limitador suave; súbelo si el altavoz está bajo.
+- Si Edge tarda o falla (`timeout: 10` s), esa frase se dice con Piper y Edge se
+  reintenta tras `fallback_cooldown` (30 s).
+
+## Buscar, informar y abrir búsquedas
+
+1. Crea una cuenta en https://www.firecrawl.dev y copia tu API key.
+2. Guárdala sin mostrarla: `Samantha.exe key firecrawl`
+   (o `python assistant.py key firecrawl`).
+3. Comprueba: `assistant.py check` — debe mostrar `OK` en Firecrawl.
+
+- Las keys de Firecrawl empiezan por **`fc-`**. Si el archivo contiene otra
+  cosa, `check` muestra `MAL` y el arranque avisa; las búsquedas usarán el
+  respaldo.
+- Plan gratuito: 1.000 créditos/mes, 10 req/min. Si Firecrawl responde `402`
+  (sin créditos) **o `401`** (key inválida), Samantha intenta **DuckDuckGo**
+  con `ddgs` (scraper no oficial; puede fallar por CAPTCHA/límite y va contra
+  los términos de uso de DuckDuckGo). No inventa resultados.
+- `wikipedia` no necesita key.
+- `open_search` solo abre Google o YouTube con la consulta ya codificada; no
+  abre URLs arbitrarias ni ejecuta programas.
+- La **fecha y hora actuales** van en el prompt de cada turno: “¿qué día es
+  hoy?” se responde sin buscar y sin alucinar.
+
+## Memoria
+
+- Di “recuerda que…” y lo guarda como nota (skill `manage_notes_and_facts`);
+  notas y hechos se inyectan en cada turno.
+- También puedes pedir “lista mis notas” o “resuelve la nota N”.
+- `python assistant.py facts` / `facts delete ID` / `facts delete --all`.
+- Base SQLite (sin FTS): usuarios, mensajes, resúmenes, notas y hechos.
+  - Desarrollo: `~\.openocto\history.db`
+  - Portable: `data\history.db` junto al `.exe`
+- Resumen en segundo plano cuando la conversación crece
+  (`memory.summarize_threshold`), ventana reciente configurable
+  (`recent_window: 80`).
 
 ## Versión portable (.exe, sin Python)
 
 ```powershell
-.\.venv\Scripts\python.exe build_portable.py      # 3-5 min
-# opciones: --with-key (incluye la API key) · --no-models (no copia modelos)
-#           --distpath dist\otra (si dist\Samantha está abierta)
+.\.venv\Scripts\python.exe build_portable.py --gpu --with-key
 ```
 
-El build ya **no borra** `dist\Samantha` antes de tiempo: construye en staging y
-solo intercambia si la carpeta está libre; conserva `data`, `logs` y `secret`, y
-deja el config anterior como `assistant-config.previous.yaml`.
+| Opción | Efecto |
+|---|---|
+| `--gpu` | Copia `cublas`/`cuDNN` del venv a `cuda\` (activa large en GPU) |
+| `--with-key` | Copia OpenCode **y** Firecrawl a `secret\` |
+| `--no-models` | No copia modelos (se descargan al primer arranque) |
+| `--distpath C:\SamanthaBuild` | Construye en otra carpeta (útil si `dist\` está bloqueada o dañada) |
 
-Genera `dist\Samantha\` (~559 MB) lista para copiar a cualquier Windows x64:
+- Tamaños: **~2,3 GB** con el modelo grande sin GPU; **~4,2 GB** con `--gpu`.
+- El build usa **staging + intercambio**: si `dist\Samantha` está abierta, el
+  rename falla *antes* de borrar nada y la build nueva queda en
+  `dist\_stage_Samantha\Samantha`. Conserva `data`, `logs` y `secret`, y deja
+  el config anterior como `assistant-config.previous.yaml`.
+- Contenido:
 
 ```
 Samantha.exe          sin consola por defecto; --console para verla
-_internal\            runtime + onnxruntime + piper/espeak + edge-tts + DLLs
-assistant-config.yaml editable, en la raíz de la carpeta
+_internal\            runtime + onnxruntime + piper + edge-tts + DLLs
+assistant-config.yaml editable, en la raíz
 personas\samantha\
-models\               whisper + voces Piper + VAD Silero + Vosk
+models\               whisper.cpp, faster-whisper, Piper, VAD y Vosk
+cuda\                 (solo --gpu) cublas/cuDNN/nvrtc
+secret\               (solo --with-key o creado con Samantha.exe key)
 LEEME.txt
 ```
 
-Uso: `Samantha.exe check` → `Samantha.exe key` (si falta) → doble clic en `Samantha.exe` (equivale a `start [--debug]`).
-Para oir la voz sin hablarle: `Samantha.exe say "Hola, soy Samantha"`.
-Los datos se crean dentro de la carpeta: `data\history.db` y `logs\assistant.log`.
+### Arranque, consola y cierre
 
-Para la búsqueda web: `Samantha.exe key firecrawl` (plan gratuito de Firecrawl).
+- Doble clic: arranca **sin ventana de consola**; el orbe y el saludo siguen
+  funcionando. `--console` (o `--terminal`) muestra la terminal.
+- `key`, `check`, `report`, `say`, `facts` y `--help` se adjuntan a la consola
+  actual o crean una nueva.
+- Para detener: `Ctrl+C` si usaste `--console`; si no, Administrador de
+  tareas → `Samantha.exe`.
+- Instancia única: si ya hay una corriendo, la segunda solo avisa (no se
+  adjunta a la primera).
+- Logs sin terminal: `Get-Content dist\Samantha\logs\assistant.log -Wait`.
 
-### Ejecutable en segundo plano
-
-- Doble clic: arranca y escucha **sin ventana de consola**. El orbe sigue
-  apareciendo; si tampoco lo quieres, pon `ui.orb: false`.
-- `Samantha.exe --console`: muestra la terminal. También vale
-  `Samantha.exe start --debug --console` para ver DEBUG.
-- `key`, `check`, `report` y `say` lanzados desde PowerShell se adjuntan a esa
-  consola. Si se lanzan con doble clic, abren una consola nueva.
-- Para ver los logs sin terminal: `Get-Content dist\Samantha\logs\assistant.log -Wait`.
-- Para detener: `Ctrl+C` si la abriste con `--console`; si no, Administrador
-  de tareas → `Samantha.exe`. Si ya hay otra instancia, `--console` no se
-  adjunta a la existente: solo muestra el aviso de instancia única.
-
-`--with-key` copia la API key a `secret\` (**viaja con la carpeta: no compartas esa
-copia**). Sin esa opción, la key se crea con `Samantha.exe key`. Sigue necesitando
-internet para el LLM y para la voz Edge; sin red, Piper responde local. Si no
-llevas `models\`, se descargan en el primer arranque.
-
-### Buscar e informar
-
-Samantha puede buscar en la web y en Wikipedia por voz. Para la web usa
-Firecrawl, que tiene un plan gratuito de 1.000 créditos al mes (una búsqueda
-de 5 resultados cuesta 2 créditos y el límite es 10 solicitudes por minuto).
-
-1. Crea una cuenta en https://www.firecrawl.dev y copia la API key.
-2. Guárdala sin mostrarla: `Samantha.exe key firecrawl`.
-3. Prueba: "Busca en internet quién ganó el Balón de Oro 2026" o
-   "¿Qué es la fotosíntesis?".
-
-Wikipedia no necesita key. La respuesta es hablada, de 2 a 4 frases, y nombra
-la fuente sin leer URLs.
-
-Si Firecrawl responde 402 (sin créditos), Samantha intenta DuckDuckGo con
-`ddgs`, un scraper no oficial que puede fallar por CAPTCHA o límite y va contra
-los términos de uso de DuckDuckGo. En ese caso avisa y no inventa resultados.
-Para una alternativa oficial y más estable: Brave Search API (2.000 consultas
-gratis al mes) o link.sc (500).
-
-### Abrir búsquedas en Google o YouTube
-
-Samantha puede abrir el navegador predeterminado con una búsqueda ya hecha.
-No necesita key ni permisos especiales:
-
-- "Abre Google y busca el clima en Bogotá".
-- "Busca en YouTube música para estudiar".
-
-La skill `open_search` solo acepta Google o YouTube y codifica la consulta;
-no abre URLs arbitrarias ni ejecuta programas.
-
-## Estructura
-
-| ruta | que es |
-|---|---|
-| `assistant.py` | start / key / check / report — única puerta de entrada |
-| `assistant-config.yaml` | **fuente de verdad**: voz, modelo, hotwords, ganancia |
-| `openocto/` | paquete (OpenOcto modificado: PTT por combo, memoria, TTS por frases) |
-| `personas/samantha/` | personaje: cálida, curiosa, breve, para leer en voz alta |
-| `secret/` | API keys: OpenCode Go + Firecrawl (gitignored; nunca al repo) |
-| `samples/` | las 9 voces es en wav para audición |
-| `logs/assistant.log` | DEBUG: transcripciones y tiempos (aquí lee `report`) |
-| `config/` | defaults del upstream (`config/default.yaml`, base del merge) |
-| `~\.openocto\` | fuera del repo: modelos (~1 GB) e `history.db` (memoria) |
-
-## Instalar en un PC nuevo (solo Python)
-
-```powershell
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install --upgrade pip
-.venv\Scripts\python.exe -m pip install -e ".[audio]"
-python assistant.py key          # pega la key del Console (enmascarada)
-python assistant.py check        # espera: OK HTTP 200
-python assistant.py start        # la primera vez descarga ~260 MB de modelos
-```
-
-Requiere Python 3.10+ (probado con 3.12; los wheels de audio existen para 3.13
-pero el pipeline ahí no está probado). Git y ffmpeg no hacen falta. Atajo:
-copia `~\.openocto\models\` del PC que ya funciona (y `history.db` si quieres
-llevarte la memoria).
+> **Cuidado con discos exFAT.** Si `dist\` vive en un volumen exFAT con errores
+> (`fsutil dirty query E:` → “El volumen contiene errores”), el build puede
+> morir con `WinError 1392/145` en `_stage_Samantha`. No insistas: ejecuta
+> `chkdsk E: /f` como administrador y, mientras tanto, compila con
+> `--distpath C:\SamanthaBuild`.
 
 ## Ajustes frecuentes (`assistant-config.yaml`)
 
-- **Voz**: `tts.engine` (`edge` = neuronal colombiana, requiere internet;
-  `piper` = local). `tts.edge.voices.es` elige `es-CO-SalomeNeural` (femenina)
-  o `es-CO-GonzaloNeural` (masculina). `tts.models.es` es la voz Piper de
-  respaldo; escucha `samples\voz-*.wav`. Con `fallback_engine: ""` se desactiva
-  el respaldo.
-- **Velocidad de Edge**: `tts.edge.rate` (`+25%` actual; prueba `+10%` o
-  `+30%`). `tts.edge.trim_silence: true` recorta los ~0,7 s de cola que Edge
-  deja por frase y conserva solo `tts.sentence_silence` (0,25 s). Medido en 3
-  frases: **12,55 s → 8,40 s (-33 %)**, con CER 1,2 % (no se comen palabras).
-- **Volumen**: `tts.gain` (1.0 original, **1.6 actual ≈ +4 dB**). Se aplica a
-  Edge y a Piper con un limitador suave; el pico no pasa de 1.0. Si aún suena
-  bajo, sube el volumen de Windows/altavoz antes de pasar de 2.0.
-- **Micrófono con arranque lento** (Bluetooth/MME): el primer chunk puede
-  tardar ~0,65–1,1 s. Se calienta el stream antes del chime y no se empieza a
-  grabar hasta que el chime termina; en conversación continua el stream queda
-  caliente entre turnos (sin grabar), así el segundo turno arranca al instante.
-  Si hablas antes del chime, esa primera sílaba aún se pierde: espera el tono.
-- **Pausas en los puntos**: la frase siguiente se sintetiza **mientras suena
-  la actual** (P21). Antes cada punto agregaba ~1,3 s de silencio; ahora queda
-  solo `tts.sentence_silence` (0,25 s). Medido: inicios 0,42 / 1,42 / 2,44 s.
-- **Si Edge se cuelga**: `tts.edge.timeout` (6 s) corta la espera y
-  `tts.fallback_cooldown` (30 s) decide cuánto se queda en Piper antes de
-  reintentar. El aviso `edge no disponible (TimeoutError: sin respuesta en 6s)`
-  es normal: esa frase se dijo con Piper y Edge se reintenta al vencer el
-  cooldown.
-- **Nombres que oye mal**: `stt.hotwords` — tu gente y tus ciudades.
-- **Modelo**: `ai.providers.go.model` (glm-5.3-flash, mimo-v2.6-flash,
-  deepseek-v4.1-flash…). `reasoning_effort` solo lo respetan algunos.
-- **Ganancia del micro**: `audio.mic_gain` (`null` = sin ganancia fija) y
-  `audio.normalize: true` (normaliza cada toma antes de Whisper; medido: el
-  AGC por chunk empeoraba el CER con ruido de 3,2% a 10,6%).
-- **Hilos de Whisper**: `stt.n_threads` (8 en este equipo).
-- **Activación**: `audio.ptt_mode` = `"vad"` (pulsar una vez; corta al callar)
-  o `"hold"` (mantener). En `vad`, `vad.silence_duration` (0,9 s) decide cuánto
-  silencio espera; `vad.no_speech_timeout` (8 s) cancela/termina si no hablas; y
-  `vad.max_recording_duration` (30 s) es el tope. `vad.threshold` (0,5) sube
-  si se corta con ruido de fondo. `vad.rms_speech_threshold` está en **50**
-  para micro lejano: con 300 una voz a RMS 150 ni llegaba a Silero. Si el
-  ruido de fondo dispara el VAD, súbelo a 80–120 (no vuelvas a 300).
-- **Conversación continua**: `audio.continuous: true` reabre el micrófono tras
-  cada respuesta; `continuous_tail_guard` (1,0 s) espera a que muera el eco del
-  TTS. Con `false`, cada turno requiere una pulsación.
+- **Micrófono/altavoz:** `audio.input_device` / `output_device` (`null` = los
+  predeterminados de Windows; acepta índice o parte del nombre). Si cambias el
+  dispositivo predeterminado, reinicia Samantha.
+- **VAD:** `vad.threshold` (0,5), `silence_duration` (0,9 s),
+  `rms_speech_threshold` (50: deja pasar voz baja; súbelo a 80–120 si el ruido
+  dispara el VAD), `no_speech_timeout` (8 s), `max_recording_duration` (30 s).
+- **Micrófono lento (Bluetooth/MME):** el stream se calienta antes del chime y
+  no se graba hasta que el tono termina; si hablas antes, pierdes la primera
+  sílaba. En conversación continua el stream queda caliente entre turnos.
+- **Nombres que oye mal:** `stt.hotwords` (tu gente y tus ciudades).
+- **Modelo LLM:** `ai.providers.go.model` (por defecto `minimax-m3.1-flash`);
+  cambia solo esa línea y valida con `assistant.py check`.
+  - `reasoning_effort`: MiniMax acepta `low|medium|high|xhigh|max`;
+    `none|auto|adaptive` dan HTTP 400. Con `high`, sube `ai.max_tokens`
+    (4000 en la config actual) porque el razonamiento consume el tope.
+- **Timeout/tokens:** `ai.turn_timeout` (30 s), `ai.max_tokens` (4000).
+- **Voz:** `tts.edge.voices.es`, `tts.edge.rate`, `tts.models.es` (Piper),
+  `tts.gain`, `tts.engine` (`edge`/`piper`).
+- **Activación:** `audio.ptt_mode`, `audio.continuous`,
+  `wakeword.enabled`, `wakeword.greet_on_start`.
+- **Orbe:** `ui.orb: false` lo desactiva.
 
-## Memoria
+Referencia técnica completa (módulos, diagramas, runbook):
+[`AGENTS.md`](AGENTS.md).
 
-- Di "recuerda que…" y lo guarda como nota (skill `manage_notes_and_facts`);
-  las notas y los hechos se inyectan en cada turno.
-- También puedes pedirle "lista mis notas" o "resuelve la nota N" por voz.
-- Para ver o borrar lo que aprendió: `python assistant.py facts`, `facts delete ID` o `facts delete --all`.
-- Todo vive en `~\.openocto\history.db` en desarrollo, o en
-  `data\history.db` dentro de la carpeta portable (SQLite con FTS5).
+## Estructura
 
-## Actualizar el upstream
+| Ruta | Qué es |
+|---|---|
+| `assistant.py` | `start` / `key` / `check` / `report` / `say` / `facts` / `orb` — única puerta de entrada |
+| `assistant-config.yaml` | **fuente de verdad** del comportamiento |
+| `openocto/` | paquete: audio, STT, TTS, VAD, wake word, IA, memoria, skills, orbe |
+| `personas/samantha/` | personaje (`persona.yaml` + `system_prompt.md`) |
+| `secret/` | API keys (gitignored; nunca al repo) |
+| `samples/` | 9 voces Piper en wav para escuchar |
+| `logs/assistant.log` | DEBUG: transcripciones y tiempos (lo lee `report`) |
+| `config/default.yaml` | defaults base del merge |
+| `models/` | faster-whisper (desarrollo) |
+| `~\.openocto\` | fuera del repo: modelos e `history.db` (memoria) |
+| `docs/specs/` | change specs de las funciones grandes |
+| `tests/` | suite (110 pruebas) |
 
-El remote `origin` apunta a `openocto-dev/openocto`. Los cambios propios están
-en los commits del fork; para traer upstream: `git fetch` y merge manual (git
-mostrará los conflictos donde upstream toque las mismas líneas).
+## Pruebas
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -t .
+# Ran 110 tests ... OK
+```
 
 ## Privacidad
 
 - **No hay servidor escuchando**: ningún puerto HTTP en este modo.
-- **Teclado**: con `audio.ptt_mode: "vad"` (por defecto) la tecla global se registra con RegisterHotKey y no se instala ningún hook de teclado. Si otra aplicación ya usa la combinación, el asistente cae a pynput y lo avisa en el log. Con `"hold"` se usa pynput, que sí instala un hook global que ve todas las pulsaciones.
+- **Teclado:** en modo `vad` la tecla global se registra con `RegisterHotKey`
+  (sin hook); si otra app usa la combinación, cae a `pynput` y lo avisa. En
+  `hold` se usa `pynput` (hook global).
 - El audio no sale del PC. Los textos van a OpenCode Go y, con `tts.engine:
-  edge`, también a Microsoft (voz). Con `piper` la voz es 100 % local.
-- Con `DEBUG`, las transcripciones quedan en `logs\assistant.log` y en
+  edge`, también a Microsoft. Con `piper` la voz es 100 % local.
+- Con `--debug`, las transcripciones quedan en `logs\assistant.log` y en
   `history.db` (local).
-- La key vive en `secret\OPENCODE_GO_API_KEY`; rotarla si crees que se filtró
-  (https://opencode.ai/console) y repetir `python assistant.py key`.
-
-## Parches propios sobre OpenOcto (resumen)
-
-P1 voces Piper es · P2 cabeceras de Go (obligatorias) · P3 UTF-8 en YAML ·
-P4 idioma del TTS = idioma del habla · P5 arranque en Windows ·
-P7 reasoning_effort/extra_body · P8 TTS por frases concurrente ·
-P9 eventos internos · P11 hotwords de Whisper · P17 Edge TTS es-CO con
-fallback a Piper · P18 VAD Silero (ptt_mode: vad) · P19 conversación continua
-(continuous) · P20 Edge rate + recorte de silencio · P21 TTS pipeline
-(síntesis N+1 mientras suena N) · **P16 modo terminal**
-(combo configurable en audio.ptt_hotkey, por defecto Ctrl+Shift+Space; fuera UI web, wake word, MCP, API).
-
-Las etapas intermedias (wake word "hotword", pantalla /live, etc.) fueron
-eliminadas en P16 y quedan en la historia de git (`git log --oneline`).
-
-## Pendientes de dueño
-
-- Elegir voz Piper de respaldo entre las 9 muestras (la principal ya es
-  `es-CO-SalomeNeural`).
-- Rotar la API key (quedó visible en el chat de su creación).
-- Borrar `..\prototype-openocto\` cuando confirmes esta versión (~1,3 GB).
+- La key vive en `secret\OPENCODE_GO_API_KEY`; rótala si crees que se filtró
+  (https://opencode.ai/console) y repite `python assistant.py key`.

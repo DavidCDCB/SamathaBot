@@ -51,6 +51,7 @@ CONFIG = ROOT / "assistant-config.yaml"
 KEY_NAME = "OPENCODE_GO_API_KEY"
 SECRET_FILE = ROOT / "secret" / "OPENCODE_GO_API_KEY"
 FIRECRAWL_SECRET = ROOT / "secret" / "FIRECRAWL_API_KEY"
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 # ── bootstrap: si existe el venv y no estamos en el, re-ejecutar alli ────────
@@ -232,13 +233,18 @@ def cmd_start(args: argparse.Namespace) -> int:
         return 2
 
     config = load_config(str(CONFIG))
-    if "web_search" in config.skills.enabled and not os.environ.get(
-        "FIRECRAWL_API_KEY"
-    ):
-        print(
-            "  aviso: sin FIRECRAWL_API_KEY; web_search queda desactivada "
-            f"({CLI} key firecrawl)"
-        )
+    fc_env = os.environ.get("FIRECRAWL_API_KEY", "")
+    if "web_search" in config.skills.enabled:
+        if not fc_env:
+            print(
+                "  aviso: sin FIRECRAWL_API_KEY; web_search queda desactivada "
+                f"({CLI} key firecrawl)"
+            )
+        elif _fc_problema(fc_env):
+            print(
+                f"  aviso: FIRECRAWL_API_KEY {_fc_problema(fc_env)}; las "
+                f"busquedas usaran el respaldo ({CLI} key firecrawl)"
+            )
     if getattr(args, "debug", False):
         os.environ["OCTO_DEBUG"] = "1"
         config.logging.console_level = "DEBUG"
@@ -291,6 +297,7 @@ def cmd_key(args: argparse.Namespace) -> int:
             ],
             capture_output=True,
             timeout=10,
+            creationflags=_CREATE_NO_WINDOW,
         )
     except Exception:
         pass
@@ -345,12 +352,29 @@ def cmd_key(args: argparse.Namespace) -> int:
 
 
 # ── check ────────────────────────────────────────────────────────────────────
+def _fc_problema(fc: str) -> str | None:
+    """Las claves de Firecrawl empiezan por 'fc-'; cualquier otra cosa es basura."""
+    if fc and not fc.startswith("fc-"):
+        return (
+            f"no parece una clave de Firecrawl (empieza por "
+            f"'{fc[:3]}…', debe empezar por 'fc-')"
+        )
+    return None
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     print("=== firecrawl ===")
     if FIRECRAWL_SECRET.exists():
         fc = _clean(FIRECRAWL_SECRET.read_text(encoding="utf-8-sig", errors="replace"))
         if fc:
-            print(f"  OK  {FIRECRAWL_SECRET}  |  {len(fc)} chars  huella {_huella(fc)}")
+            problema = _fc_problema(fc)
+            estado = "MAL " if problema else "OK  "
+            print(
+                f"  {estado} {FIRECRAWL_SECRET}  |  {len(fc)} chars  "
+                f"huella {_huella(fc)}"
+            )
+            if problema:
+                print(f"  AVISO: {problema}; reponla con: {CLI} key firecrawl")
         else:
             print(f"  {FIRECRAWL_SECRET} existe pero esta VACIO")
     else:
@@ -709,6 +733,14 @@ def _preparar_consola(forzar: bool, cmd: str) -> None:
     """
     if os.name != "nt":
         return
+    # Si stdout está redirigido (pipe/archivo), no crear una consola que se
+    # trague el texto; el usuario pidió --console pero la salida ya va a otro
+    # sitio. En un .exe --windowed stdout es None y sí se sigue.
+    try:
+        if sys.stdout is not None and not sys.stdout.isatty():
+            return
+    except Exception:
+        pass
     try:
         from ctypes import wintypes
 

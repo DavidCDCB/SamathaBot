@@ -71,14 +71,28 @@ class WebSearchSkillTest(unittest.IsolatedAsyncioTestCase):
             result = await self.skill.execute("algo inexistente")
         self.assertIn("No encontré", result)
 
-    async def test_401_reports_invalid_key(self) -> None:
-        with patch(
-            "openocto.skills.web_search.requests.post",
-            return_value=_Resp(401, {}),
+    async def test_401_falls_back_to_duckduckgo(self) -> None:
+        rows = [
+            {
+                "title": "Razas de gato",
+                "href": "https://example.org/gatos",
+                "body": "Lista completa",
+            }
+        ]
+        with (
+            patch(
+                "openocto.skills.web_search.requests.post",
+                return_value=_Resp(401, {}),
+            ),
+            patch(
+                "openocto.skills.web_search._ddg_text",
+                return_value=rows,
+            ) as ddg,
+            patch("openocto.skills.web_search.logger.warning"),
         ):
             result = await self.skill.execute("algo")
-        self.assertIn("401", result)
-        self.assertIn("key", result)
+        self.assertIn("Razas de gato", result)
+        ddg.assert_called_once()
 
     async def test_429_reports_rate_limit(self) -> None:
         with patch(
@@ -130,9 +144,7 @@ class WebSearchSkillTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ddg.call_args.args[1], 2)
 
     async def test_402_fallback_disabled(self) -> None:
-        skill = WebSearchSkill(
-            {"timeout": 1, "max_results": 5, "fallback": "none"}
-        )
+        skill = WebSearchSkill({"timeout": 1, "max_results": 5, "fallback": "none"})
         with (
             patch(
                 "openocto.skills.web_search.requests.post",

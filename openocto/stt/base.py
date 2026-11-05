@@ -11,16 +11,22 @@ import numpy as np
 @dataclass
 class TranscriptionResult:
     text: str
-    language: str        # detected language code: "en", "ru", etc.
-    confidence: float    # 0.0-1.0, may be 0.0 if not supported by engine
-    duration_ms: float   # processing time in milliseconds
+    language: str  # detected language code: "en", "ru", etc.
+    confidence: float  # 0.0-1.0, may be 0.0 if not supported by engine
+    duration_ms: float  # processing time in milliseconds
 
 
 class STTEngine(ABC):
     """Abstract speech-to-text engine."""
 
+    def describe(self) -> str:
+        """Texto corto para el banner (que oido esta usando realmente)."""
+        return type(self).__name__
+
     @abstractmethod
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> TranscriptionResult:
+    def transcribe(
+        self, audio: np.ndarray, sample_rate: int = 16000
+    ) -> TranscriptionResult:
         """Transcribe audio to text.
 
         Args:

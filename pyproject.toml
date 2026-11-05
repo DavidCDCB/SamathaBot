@@ -31,6 +31,7 @@ dependencies = [
 [project.optional-dependencies]
 audio = [
     "pywhispercpp>=1.2.0",
+    "faster-whisper>=1.2.1",
     "piper-tts>=1.2.0",
     "onnxruntime>=1.16",
     "edge-tts>=7.3.0",

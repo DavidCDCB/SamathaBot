@@ -134,13 +134,16 @@ class WebSearchSkill(Skill):
             return "Error: no pude conectar con el buscador."
 
         if resp.status_code == 401:
-            return (
-                "Error: Firecrawl rechazó la API key (401). "
-                "Revisa Samantha.exe key firecrawl."
+            logger.warning(
+                "Firecrawl rechazó la API key (401); respaldo DuckDuckGo "
+                "(actualizala con: Samantha.exe key firecrawl)"
             )
+            return await self._duckduckgo(query, n, motivo="rechazó la API key (401)")
         if resp.status_code == 402:
             logger.warning("Firecrawl sin créditos (402); usando DuckDuckGo")
-            return await self._duckduckgo(query, n)
+            return await self._duckduckgo(
+                query, n, motivo="se quedó sin créditos (402)"
+            )
         if resp.status_code == 429:
             return "Error: límite de Firecrawl alcanzado (429). Intenta en un minuto."
         if resp.status_code >= 400:
@@ -176,12 +179,12 @@ class WebSearchSkill(Skill):
             return "No encontré resultados web para esa consulta."
         return "\n".join(lines)
 
-    async def _duckduckgo(self, query: str, n: int) -> str:
-        """Fallback when Firecrawl reports no credits."""
+    async def _duckduckgo(self, query: str, n: int, motivo: str = "") -> str:
+        """Fallback when Firecrawl fails (credits, invalid key...)."""
+        motivo = motivo or "fallo"
         if self._fallback not in ("duckduckgo", "ddgs"):
             return (
-                "Error: Firecrawl se quedó sin créditos (402) y el respaldo "
-                "DuckDuckGo está desactivado."
+                f"Error: Firecrawl {motivo} y el respaldo DuckDuckGo está desactivado."
             )
         try:
             rows = await asyncio.to_thread(
@@ -190,14 +193,11 @@ class WebSearchSkill(Skill):
         except Exception as exc:  # noqa: BLE001 - fallback is best-effort
             logger.warning("DuckDuckGo fallback falló: %s", type(exc).__name__)
             return (
-                "Error: Firecrawl se quedó sin créditos y DuckDuckGo no pudo "
+                f"Error: Firecrawl {motivo} y DuckDuckGo no pudo "
                 "responder. Intenta más tarde."
             )
         if not rows:
-            return (
-                "Error: Firecrawl se quedó sin créditos y DuckDuckGo no "
-                "encontró resultados."
-            )
+            return f"Error: Firecrawl {motivo} y DuckDuckGo no encontró resultados."
 
         lines: list[str] = []
         for i, item in enumerate(rows[:n], 1):

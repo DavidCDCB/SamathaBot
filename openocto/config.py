@@ -85,13 +85,32 @@ class VADConfig(BaseModel):
     max_recording_duration: float = 30.0
 
 
+class FasterWhisperConfig(BaseModel):
+    model: str = "large-v3-turbo"
+    device: str = "auto"  # auto | cuda | cpu
+    compute_type: str = "default"  # default | float16 | int8_float16 | int8
+    beam_size: int = 5
+    download_root: str = "models/faster-whisper"
+    # Carpetas extra con cublas64_12.dll / cudnn64_9.dll para activar CUDA.
+    # Vacio = auto: busca cuda\ junto a la app y los paquetes pip
+    # nvidia-cublas-cu12 / nvidia-cudnn-cu12 del venv.
+    cuda_dll_dirs: list[str] = Field(default_factory=list)
+
+
 class STTConfig(BaseModel):
+    # primary y fallback: whisper_cpp | faster_whisper
+    engine: str = "whisper_cpp"
+    fallback_engine: str = "whisper_cpp"
+    # Si el motor principal tarda más de esto, los siguientes turnos usan
+    # el fallback. 0 desactiva el cambio por latencia.
+    fallback_after_ms: int = 4000
     model_size: str = "small"
     language: str = "auto"
     n_threads: int = 4
     # P11: palabras que Whisper debe preferir (nombres propios, toponimos).
     # Se inyectan como initial_prompt del decode; corrige "Freddy"->"Fredy".
     hotwords: list[str] = Field(default_factory=list)
+    faster_whisper: FasterWhisperConfig = Field(default_factory=FasterWhisperConfig)
 
 
 class EdgeTTSConfig(BaseModel):
@@ -211,6 +230,12 @@ class WakeWordConfig(BaseModel):
     enabled: bool = False
     phrase: str = "Hola Samantha"
     model: str = "vosk-model-small-es-0.42"
+    # Saludo de arranque: al iniciar, la frase se envía al modelo como si
+    # la hubieras dicho; Samantha responde y (en modo continuo) se queda
+    # escuchando, sin necesidad de decir la wake word.
+    greet_on_start: bool = False
+    greet_text: str = ""  # vacío = usar la frase de la wake word
+    greet_delay: float = 1.5  # segundos tras el arranque
 
 
 class AppConfig(BaseModel):

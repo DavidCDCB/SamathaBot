@@ -82,9 +82,10 @@ class WebSearchSkill(Skill):
     description = (
         "Busca en la web información actual o que no esté en tu conocimiento: "
         "noticias, precios, eventos, personas o datos verificables. Devuelve "
-        "título, resumen y URL. No la uses para definiciones enciclopédicas si "
-        "Wikipedia basta. No la uses para abrir YouTube o Google; para eso usa "
-        "open_search."
+        "título, resumen y URL. Formula una consulta corta y natural, "
+        "preferiblemente en español; no uses comillas ni operadores avanzados. "
+        "No la uses para definiciones enciclopédicas si Wikipedia basta. No la "
+        "uses para abrir YouTube o Google; para eso usa open_search."
     )
     Parameters = _Params
 

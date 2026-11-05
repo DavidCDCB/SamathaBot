@@ -13,7 +13,8 @@ Desarrollo:
 
 Carpeta portable:
     Samantha.exe [start] [--debug] | key | check | report | say "texto"
-    (doble clic en Samantha.exe equivale a `start`)
+    (doble clic en Samantha.exe equivale a `start`, sin terminal)
+    Samantha.exe --console [start]   # muestra/crea la terminal
 
 No se imprimen claves nunca: longitudes y huellas SHA-256 (10 hex) nada mas.
 
@@ -637,13 +638,135 @@ def _argv_por_defecto(argv: list[str]) -> list[str]:
     return ["start", *argv] if not argv else argv
 
 
+_CONSOLE_FLAGS = ("--console", "--terminal")
+_CONSOLE_STREAMS: tuple | None = None
+
+
+class _NullStream:
+    """Sumidero para el .exe --windowed cuando no hay terminal."""
+
+    encoding = "utf-8"
+    errors = "replace"
+
+    def write(self, _texto: str) -> int:
+        return len(_texto)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return False
+
+    def fileno(self) -> int:
+        raise OSError("sin consola")
+
+    def read(self, *_args, **_kwargs) -> str:
+        return ""
+
+    def readline(self, *_args, **_kwargs) -> str:
+        return ""
+
+    def reconfigure(self, **_kwargs) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+_NULL_STREAM = _NullStream()
+
+
+def _instalar_salida_nula() -> None:
+    sys.stdout = _NULL_STREAM
+    sys.stderr = _NULL_STREAM
+    sys.stdin = _NULL_STREAM
+
+
+def _conectar_stdio() -> None:
+    """Conecta stdout/stderr/stdin a la consola de Windows ya adjuntada."""
+    global _CONSOLE_STREAMS
+    if sys.stdout is not None and sys.stderr is not None and sys.stdin is not None:
+        return
+    try:
+        out = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        err = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        inp = open("CONIN$", "r", encoding="utf-8", buffering=1)
+    except OSError:
+        _instalar_salida_nula()
+        return
+    sys.stdout, sys.stderr, sys.stdin = out, err, inp
+    _CONSOLE_STREAMS = (out, err, inp)
+
+
+def _preparar_consola(forzar: bool, cmd: str) -> None:
+    """En el .exe: start sin terminal; CLI y --console con terminal.
+
+    - Doble clic (start, sin --console): no hay consola; stdout va a un
+      sumidero para que print/logging no fallen.
+    - key/check/report/say/facts/orb y --help: se adjuntan a la consola
+      desde la que se lanzaron o crean una nueva.
+    - --console: fuerza la consola.
+    """
+    if os.name != "nt":
+        return
+    try:
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetConsoleWindow.restype = wintypes.HWND
+        kernel32.AllocConsole.restype = wintypes.BOOL
+        kernel32.AttachConsole.restype = wintypes.BOOL
+        kernel32.AttachConsole.argtypes = [wintypes.DWORD]
+    except Exception:
+        _instalar_salida_nula()
+        return
+
+    hay_consola = bool(kernel32.GetConsoleWindow())
+    creada = False
+    if not hay_consola:
+        if forzar or cmd not in ("start",):
+            # Primero intenta la terminal desde la que se lanzó; si no,
+            # crea una nueva (doble clic en check/key/etc.).
+            if not kernel32.AttachConsole(0xFFFFFFFF):
+                if not kernel32.AllocConsole():
+                    _instalar_salida_nula()
+                    return
+                creada = True
+        else:
+            _instalar_salida_nula()
+            return
+
+    try:
+        kernel32.SetConsoleOutputCP(65001)
+        kernel32.SetConsoleCP(65001)
+        if creada:  # no renombrar la terminal del usuario si solo se adjuntó
+            kernel32.SetConsoleTitleW("Samantha")
+    except Exception:
+        pass
+    _conectar_stdio()
+
+
+def _quitar_flag_consola(argv: list[str]) -> list[str]:
+    """Saca --console/--terminal antes de argparse."""
+    return [arg for arg in argv if arg not in _CONSOLE_FLAGS]
+
+
 def main() -> int:
-    sys.argv[1:] = _argv_por_defecto(sys.argv[1:])
+    argv = sys.argv[1:]
+    quiere_consola = any(arg in _CONSOLE_FLAGS for arg in argv)
+    sys.argv[1:] = _argv_por_defecto(_quitar_flag_consola(argv))
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "start"
+    if FROZEN or sys.stdout is None or quiere_consola:
+        _preparar_consola(quiere_consola, cmd)
     _ensure_venv()
     ap = argparse.ArgumentParser(
         prog=CLI,
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Windows: doble clic arranca en segundo plano, sin terminal. "
+            "Usa --console para mostrar/crear la terminal."
+        ),
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("start", help="arrancar el asistente")

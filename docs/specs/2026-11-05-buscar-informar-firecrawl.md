@@ -1004,6 +1004,68 @@ oficiales.
 
 ---
 
+## Follow-up: presupuesto de investigación (2026-11-05)
+
+**Problema:** el modelo encadenó 5–6 `web_search` para una misma pregunta y
+agotó `_MAX_TOOL_ITERATIONS`; el usuario oyó el fallback genérico aunque las
+búsquedas no habían fallado.
+
+**Cambios:**
+- `openocto/ai/openai_compat.py`: `_MAX_RESEARCH_CALLS = 2`; `web_search` y
+  `wikipedia` cuentan para el presupuesto. Al llegar a 2, se llama
+  `_final_answer()` sin `tools`, para obligar una respuesta con lo consultado.
+- El fallback ahora dice que no hubo una respuesta concluyente, no que una
+  herramienta falló.
+- El aviso de “max iterations” pasa a INFO para no interrumpir la voz.
+- `personas/samantha/system_prompt.md`: máximo dos búsquedas, corregir
+  premisas falsas, no afirmar fallos de herramientas sin error, confirmar
+  nombres mal transcritos y buscar con consultas cortas en español.
+- `openocto/skills/web_search.py`: descripción con consultas cortas y sin
+  operadores avanzados.
+- `tests/test_llm.py`: prueba que dos `web_search` fuerzan una tercera llamada
+  sin `tools` y que la respuesta final se emite.
+
+**Acceptance Criteria adicionales:**
+- AC13: `.venv\Scripts\python.exe tests\test_llm.py` pasa (4 tests).
+- AC14: tras dos tools de investigación, la siguiente llamada al backend no
+  incluye `tools` y el texto final se emite.
+
+---
+
+## Follow-up: ejecutable sin terminal (2026-11-05)
+
+**Intent:** doble clic en `Samantha.exe` arranca en segundo plano, sin ventana
+de consola; `--console` la muestra para logs o Ctrl+C. Los comandos CLI siguen
+funcionando desde PowerShell.
+
+**Implementación:**
+- `build_portable.py`: PyInstaller `--windowed` en lugar de `--console`.
+- `assistant.py`: `_preparar_consola()` usa `AttachConsole` (terminal desde la
+  que se lanzó) o `AllocConsole` (`--console`/CLI con doble clic); si no hay
+  consola, `_NullStream` evita que `print`/logging fallen. `--console` y
+  `--terminal` se quitan antes de argparse.
+- `key`, `check`, `report`, `say`, `facts`, `orb` y `--help` piden consola;
+  `start` sin flag queda oculto.
+- `build_portable.py` y `README.md` documentan `--console`, logs y cómo
+  detener la instancia oculta.
+- `tests/test_cli.py`: se comprueba que `--console` no llega a argparse y que
+  solo `--console` equivale a `start`.
+
+**Limitación conocida:** no hay icono de bandeja ni comando `stop`. Para
+detener una instancia oculta: Administrador de tareas → `Samantha.exe`, o
+reiniciar con `--console` desde el principio (una segunda instancia con
+`--console` no se adjunta a la que ya corre; solo avisa del lock).
+
+**Acceptance Criteria adicionales:**
+- AC15: `.venv\Scripts\python.exe tests\test_cli.py` pasa (5 tests).
+- AC16: en un proceso `pythonw` sin consola, `stdout` queda como `_NullStream`
+  y no lanza al imprimir; con `--console` queda como `TextIOWrapper` con
+  `isatty()` verdadero.
+- AC17: `build_portable.py` usa `--windowed` y el `.exe` compilado no muestra
+  consola al hacer doble clic.
+
+---
+
 ## Follow-up: abrir búsquedas Google/YouTube (2026-11-05)
 
 **Intent:** la única acción de control del PC es abrir una búsqueda de Google

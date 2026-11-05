@@ -87,7 +87,7 @@ deja el config anterior como `assistant-config.previous.yaml`.
 Genera `dist\Samantha\` (~559 MB) lista para copiar a cualquier Windows x64:
 
 ```
-Samantha.exe          consola, hotkey global Ctrl+Shift+Space
+Samantha.exe          sin consola por defecto; --console para verla
 _internal\            runtime + onnxruntime + piper/espeak + edge-tts + DLLs
 assistant-config.yaml editable, en la raíz de la carpeta
 personas\samantha\
@@ -100,6 +100,19 @@ Para oir la voz sin hablarle: `Samantha.exe say "Hola, soy Samantha"`.
 Los datos se crean dentro de la carpeta: `data\history.db` y `logs\assistant.log`.
 
 Para la búsqueda web: `Samantha.exe key firecrawl` (plan gratuito de Firecrawl).
+
+### Ejecutable en segundo plano
+
+- Doble clic: arranca y escucha **sin ventana de consola**. El orbe sigue
+  apareciendo; si tampoco lo quieres, pon `ui.orb: false`.
+- `Samantha.exe --console`: muestra la terminal. También vale
+  `Samantha.exe start --debug --console` para ver DEBUG.
+- `key`, `check`, `report` y `say` lanzados desde PowerShell se adjuntan a esa
+  consola. Si se lanzan con doble clic, abren una consola nueva.
+- Para ver los logs sin terminal: `Get-Content dist\Samantha\logs\assistant.log -Wait`.
+- Para detener: `Ctrl+C` si la abriste con `--console`; si no, Administrador
+  de tareas → `Samantha.exe`. Si ya hay otra instancia, `--console` no se
+  adjunta a la existente: solo muestra el aviso de instancia única.
 
 `--with-key` copia la API key a `secret\` (**viaja con la carpeta: no compartas esa
 copia**). Sin esa opción, la key se crea con `Samantha.exe key`. Sigue necesitando

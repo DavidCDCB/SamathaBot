@@ -4,7 +4,8 @@ Uso:
     .venv\\Scripts\\python.exe build_portable.py [--with-key] [--no-models] [--distpath dist\\otra]
 
 Produce:
-    dist\\Samantha\\Samantha.exe        (consola; icono del orbe; hotkey global Ctrl+Shift+Space)
+    dist\\Samantha\\Samantha.exe        (sin consola por defecto; --console para verla;
+                                         icono del orbe; hotkey global Ctrl+Shift+Space)
     dist\\Samantha\\_internal\\          (runtime + onnxruntime + piper/espeak + DLLs)
     dist\\Samantha\\assistant-config.yaml  (editable, en la raiz)
     dist\\Samantha\\personas\\samantha\\
@@ -162,7 +163,7 @@ def main() -> int:
         "--noconfirm",
         "--clean",
         "--onedir",
-        "--console",
+        "--windowed",
         "--name",
         "Samantha",
         "--icon",
@@ -265,14 +266,18 @@ def main() -> int:
 2b) Búsqueda web:          Samantha.exe key firecrawl
                            (plan gratis: 1.000 créditos/mes; 10 req/min)
                            (si se acaban los créditos, intenta DuckDuckGo)
-3) Arranca:                doble clic en Samantha.exe  (o Samantha.exe start)
+3) Arranca:                doble clic en Samantha.exe  (segundo plano, sin terminal)
+   Con terminal:           Samantha.exe --console
                            di "Hola Samantha" o pulsa Ctrl+Shift+Space;
                            tras responder sigue escuchando
-   Con debug en consola:   Samantha.exe start --debug
+   Con debug en terminal:  Samantha.exe start --debug --console
 4) Prueba la voz:          Samantha.exe say "Hola, soy Samantha"
 5) Latencia por turno:     Samantha.exe report
 6) Abrir una búsqueda:     "Abre Google y busca el clima en Bogotá"
                            "Busca en YouTube música para estudiar"
+
+Para detener:              Ctrl+C si la abriste con --console;
+                           o Administrador de tareas -> Samantha.exe
 
 Config:    assistant-config.yaml  (en esta carpeta; edítalo y reinicia)
 Modelos:   models\\               (whisper, voces Piper, VAD Silero y Vosk)

@@ -21,10 +21,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_TOOL_ITERATIONS = 6
+# Para voz no queremos que el modelo encadene búsquedas indefinidamente.
+# Tras dos consultas de investigación se fuerza una respuesta sin tools.
+_MAX_RESEARCH_CALLS = 2
+_RESEARCH_TOOLS = {"web_search", "wikipedia"}
 # Espera del cliente para peticiones no interactivas (resumen de memoria y
 # comprobación de arranque). Los turnos de voz usan turn_timeout.
 _CLIENT_TIMEOUT = 120.0
-_TOOL_LOOP_FALLBACK = "Perdón, me enredé con una herramienta. ¿Me lo repites?"
+_TOOL_LOOP_FALLBACK = (
+    "No encontré una respuesta concluyente con lo que pude consultar. "
+    "¿Me lo preguntas de otra forma?"
+)
 
 
 def _sanitize_messages(messages: list[dict]) -> list[dict]:
@@ -209,6 +216,7 @@ class OpenAICompatBackend(AIBackend):
         convo: list[dict[str, Any]] = list(messages)
         tools = skills.openai_tools()
         spoken: list[str] = []
+        research_calls = 0
 
         for _ in range(_MAX_TOOL_ITERATIONS):
             stream = await self._client.chat.completions.create(
@@ -269,6 +277,8 @@ class OpenAICompatBackend(AIBackend):
                 if not isinstance(args, dict):
                     args = {}
                 logger.info("Tool call: %s(%s)", call["name"], args)
+                if call["name"] in _RESEARCH_TOOLS:
+                    research_calls += 1
                 result = await skills.call(call["name"], args)
                 convo.append(
                     {
@@ -278,7 +288,48 @@ class OpenAICompatBackend(AIBackend):
                     }
                 )
 
-        logger.warning("Tool loop hit max iterations (%d)", _MAX_TOOL_ITERATIONS)
+            if research_calls >= _MAX_RESEARCH_CALLS:
+                logger.info(
+                    "Research budget reached (%d); forcing final answer",
+                    research_calls,
+                )
+                return await self._final_answer(convo, spoken, on_chunk)
+
+        logger.info("Tool loop hit max iterations (%d)", _MAX_TOOL_ITERATIONS)
         spoken.append(_TOOL_LOOP_FALLBACK)
         await on_chunk(_TOOL_LOOP_FALLBACK)
+        return "".join(spoken)
+
+    async def _final_answer(
+        self,
+        convo: list[dict[str, Any]],
+        spoken: list[str],
+        on_chunk: Callable[[str], Awaitable[None]],
+    ) -> str:
+        """Cierra el turno sin herramientas tras agotar la investigación."""
+        final_parts: list[str] = []
+        try:
+            stream = await self._client.chat.completions.create(
+                model=self._model,
+                messages=convo,
+                stream=True,
+                **self._turn_kwargs(),
+            )
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    final_parts.append(delta)
+                    spoken.append(delta)
+                    await on_chunk(delta)
+        except Exception:
+            logger.exception("Final answer without tools failed")
+            spoken.append(_TOOL_LOOP_FALLBACK)
+            await on_chunk(_TOOL_LOOP_FALLBACK)
+            return "".join(spoken)
+
+        if not "".join(final_parts).strip():
+            spoken.append(_TOOL_LOOP_FALLBACK)
+            await on_chunk(_TOOL_LOOP_FALLBACK)
         return "".join(spoken)

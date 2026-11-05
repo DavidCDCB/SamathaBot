@@ -125,7 +125,7 @@ ai:
       # "none", "auto" y "adaptive" dan HTTP 400; omitir equivale a max.
       # Para voz, "low" es el más rápido. Con high/max sube max_tokens,
       # porque el razonamiento cuenta dentro del tope.
-      reasoning_effort: "high"
+      reasoning_effort: "low"
 
       # ═══════════════════════════════════════════════════════════════════
       # MODELOS RECOMENDADOS (plan Go: $10/mes; el "límite" es el uso mensual

@@ -7,8 +7,15 @@ from types import SimpleNamespace as NS
 from openocto.ai.openai_compat import OpenAICompatBackend
 
 
-def _chunk(content=None, tool_calls=None):
-    return NS(choices=[NS(delta=NS(content=content, tool_calls=tool_calls))])
+def _chunk(content=None, tool_calls=None, finish_reason=None):
+    return NS(
+        choices=[
+            NS(
+                delta=NS(content=content, tool_calls=tool_calls),
+                finish_reason=finish_reason,
+            )
+        ]
+    )
 
 
 def _llamada(index, id=None, name=None, arguments=""):
@@ -50,6 +57,18 @@ class _Herramientas:
     async def call(self, name, args):
         self.llamadas.append((name, args))
         return "Saved note #1"
+
+
+class _HerramientasWeb(_Herramientas):
+    def __len__(self):
+        return 2
+
+    def openai_tools(self):
+        return [{"type": "function", "function": {"name": "web_search"}}]
+
+    async def call(self, name, args):
+        self.llamadas.append((name, args))
+        return f"resultado web {len(self.llamadas)}"
 
 
 def _backend(respuestas):
@@ -132,6 +151,56 @@ class StreamingTest(unittest.TestCase):
         self.assertEqual(
             comp.llamadas[1]["messages"][-1],
             {"role": "tool", "tool_call_id": "c1", "content": "Saved note #1"},
+        )
+
+    def test_busqueda_se_corta_tras_dos_llamadas_y_fuerza_respuesta(self):
+        primera = [
+            _chunk(
+                None,
+                [
+                    _llamada(
+                        0,
+                        id="w1",
+                        name="web_search",
+                        arguments='{"query": "Bleach final"}',
+                    )
+                ],
+            )
+        ]
+        segunda = [
+            _chunk(
+                None,
+                [
+                    _llamada(
+                        0,
+                        id="w2",
+                        name="web_search",
+                        arguments='{"query": "Bleach manga ended"}',
+                    )
+                ],
+            )
+        ]
+        tercera = [_chunk("El manga de Bleach terminó en 2016."), _chunk(None)]
+        b, comp = _backend([primera, segunda, tercera])
+        herramientas = _HerramientasWeb()
+        emitido = []
+
+        async def on_chunk(texto):
+            emitido.append(texto)
+
+        msgs = [{"role": "user", "content": "¿Cuándo termina Bleach?"}]
+        texto = asyncio.run(
+            b.send_streaming(msgs, "sistema", on_chunk, skills=herramientas)
+        )
+
+        self.assertEqual(len(herramientas.llamadas), 2)
+        self.assertEqual(len(comp.llamadas), 3)
+        self.assertIn("tools", comp.llamadas[0])
+        self.assertNotIn("tools", comp.llamadas[2])
+        self.assertEqual(texto, "El manga de Bleach terminó en 2016.")
+        self.assertEqual(emitido, ["El manga de Bleach terminó en 2016."])
+        self.assertTrue(
+            any(m.get("role") == "tool" for m in comp.llamadas[2]["messages"])
         )
 
 

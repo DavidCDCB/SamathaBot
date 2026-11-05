@@ -876,15 +876,12 @@ class OpenOctoApp:
             persona_name = self._persona.name
             uid = self._current_user_id
             self._captura_nombre(uid, persona_name, result.text)
-            self._history_store.add_message(
-                uid,
-                persona_name,
-                "user",
-                result.text,
-                language=result.language,
-            )
 
-            # Build context (memory-enriched system prompt + recent history)
+            # Build context (memory-enriched system prompt + recent history).
+            # IMPORTANTE: construir el contexto ANTES de guardar el mensaje
+            # actual. Si se guarda primero, el historial ya lo trae y
+            # AIRouter.send_streaming lo vuelve a añadir: el modelo recibía
+            # el mismo mensaje dos veces ("me estás escuchando doble").
             if self._memory:
                 system_prompt, history = self._memory.build_context(
                     uid,
@@ -898,6 +895,14 @@ class OpenOctoApp:
                     persona_name,
                     limit=self._config.ai.max_history,
                 )
+
+            self._history_store.add_message(
+                uid,
+                persona_name,
+                "user",
+                result.text,
+                language=result.language,
+            )
 
             # La IA no sabe qué día es: sin esto, "hoy" es alucinación o una
             # búsqueda web innecesaria (MiniMax respondió "24 de marzo").

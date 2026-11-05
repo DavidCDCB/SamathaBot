@@ -110,6 +110,15 @@ class AIRouter:
             skills: optional skill registry for tool-use loop.
         """
         messages = [*history, {"role": "user", "content": user_text}]
+        # Defensa: algunos llamadores guardan el mensaje actual en el historial
+        # antes de pedir la respuesta. Si el último mensaje del historial es
+        # exactamente el mismo, quitarlo para no enviarlo dos veces.
+        if (
+            len(messages) >= 2
+            and messages[-2].get("role") == "user"
+            and messages[-2].get("content") == user_text
+        ):
+            del messages[-2]
         backend = self.get_backend()
         return await backend.send_streaming(
             messages,

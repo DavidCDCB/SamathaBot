@@ -1,5 +1,6 @@
 """Pruebas del orbe de estado: funciones puras y controlador sin ventana (sin Tk)."""
 
+import math
 import queue
 import unittest
 
@@ -13,6 +14,7 @@ from openocto.ui.orb import (
     mezcla,
     nivel_normalizado,
     parametros,
+    puntos_simbolo,
 )
 
 ESTADOS = (
@@ -59,6 +61,24 @@ class OrbPuroTest(unittest.TestCase):
     def test_cada_estado_tiene_un_color_distinto(self):
         colores = {ESTILOS[e].color for e in ESTADOS}
         self.assertEqual(len(colores), len(ESTADOS))
+
+    def test_simbolo_infinito_centrado_y_proporcional(self):
+        radio = 100.0
+        pts = puntos_simbolo(0.0, 0.0, radio)
+        xs = [x for x, _ in pts]
+        ys = [y for _, y in pts]
+        self.assertAlmostEqual(max(xs), radio * 0.62, places=6)
+        self.assertAlmostEqual(min(xs), -radio * 0.62, places=6)
+        # el máximo de sin·cos cae entre muestras: tolerancia de medio píxel
+        self.assertAlmostEqual(max(ys), radio * 0.23, delta=0.05)
+        self.assertAlmostEqual(min(ys), -radio * 0.23, delta=0.05)
+        # simetría central: por cada punto existe su opuesto
+        for x, y in pts[:20]:
+            self.assertTrue(
+                any(abs(-x - x2) < 1e-9 and abs(-y - y2) < 1e-9 for x2, y2 in pts)
+            )
+        # todo el trazo cae dentro del cuerpo del orbe
+        self.assertTrue(all(math.hypot(x, y) < radio for x, y in pts))
 
 
 class OrbControladorTest(unittest.TestCase):
@@ -117,6 +137,24 @@ class OrbRenderTest(unittest.TestCase):
         self.assertEqual(sin.getpixel((0, 0))[3], 0)
         self.assertEqual(sin.getpixel((SIZE // 2, SIZE // 2))[3], 255)
         self.assertLess(alfa_total(sin), alfa_total(con))
+
+    def test_el_centro_tiene_el_simbolo_crema(self):
+        img = dibuja_fotograma("listening", 0.4, 0.0)
+        rojo, verde, azul, alfa = img.getpixel((SIZE // 2, SIZE // 2))
+        self.assertEqual(alfa, 255)
+        self.assertGreater(rojo, 180)
+        self.assertGreater(verde, 150)
+        self.assertGreater(azul, 100)
+
+    def test_sin_brillo_especular_en_el_interior(self):
+        img = dibuja_fotograma("listening", 0.4, 0.0)
+        p = parametros("listening", 0.4, 0.0)
+        radio = (SIZE / 2 - 16) * p["radio"]
+        x = int(round(SIZE / 2 - radio * 0.40))
+        y = int(round(SIZE / 2 - radio * 0.44))
+        rojo, verde, azul, _ = img.getpixel((x, y))
+        # antes había una chispa blanca aquí; ahora es el color del cuerpo
+        self.assertLess(max(rojo, verde, azul), 250)
 
     def test_bgra_premultiplicado_ordena_bytes_y_multiplica_el_color(self):
         from PIL import Image

@@ -22,9 +22,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 try:
-    from PIL import Image, ImageDraw, ImageFilter
+    from PIL import Image, ImageDraw
 except ImportError:  # sin Pillow, el orbe usa la ventana de Tk
-    Image = ImageDraw = ImageFilter = None
+    Image = ImageDraw = None
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ FRAME_MS = 33  # ~30 fotogramas por segundo
 KEY = "#010203"  # color que Windows deja transparente (solo en la ventana de Tk)
 RMS_TOPE = 2500.0  # RMS int16 con el que el orbe reacciona al máximo
 SUPERMUESTREO = 2  # el orbe se dibuja al doble y se reduce: bordes suaves
+SIMBOLO = "#f3e2bd"  # crema del infinito interior
 
 
 @dataclass(frozen=True)
@@ -139,6 +140,23 @@ def _puntos_orbita(
     return pts
 
 
+def puntos_simbolo(
+    cx: float, cy: float, radio: float, n: int = 180
+) -> list[tuple[float, float]]:
+    """Lemniscata (infinito) centrada, ancho 1.24r y alto 0.46r.
+
+    Curva de Gerono: x = cos(t), y = sin(t)·cos(t). Pasa por el centro en
+    t=π/2 y 3π/2, que es donde se cruzan los dos bucles.
+    """
+    ancho = radio * 0.62
+    alto = radio * 0.46
+    pts: list[tuple[float, float]] = []
+    for k in range(n):
+        a = math.tau * k / n
+        pts.append((cx + ancho * math.cos(a), cy + alto * math.sin(a) * math.cos(a)))
+    return pts
+
+
 def _dibuja_cuerpo(
     img: Image.Image,
     c: float,
@@ -148,13 +166,11 @@ def _dibuja_cuerpo(
     lado: int,
     unidad: float,
 ) -> None:
-    """Esfera de vidrio con degradado, canto oscuro y núcleo luminoso."""
+    """Cuerpo plano con viñeta sutil, canto oscuro y borde de vidrio."""
     base = p["color"]
     acento = p["acento"]
-    oscuro = mezcla(base, "#04060b", 0.68)
-    claro = mezcla(base, "#ffffff", 0.36)
-    medio = mezcla(base, acento, 0.34)
-    brillo = p["brillo"]
+    oscuro = mezcla(base, "#04060b", 0.62)
+    borde = mezcla(base, acento, 0.22)
     fase = p["fase"]
     deformacion = 0.020 if estado in ("hearing", "speaking") else 0.010
 
@@ -163,10 +179,11 @@ def _dibuja_cuerpo(
     for i in range(pasos, 0, -1):
         f = i / pasos
         rr = r * f
-        tt = (1 - f) ** 1.7  # centro luminoso, borde profundo
-        col = mezcla(oscuro, claro, tt * brillo)
-        if f > 0.76:
-            col = mezcla(col, medio, (f - 0.76) * 0.9)
+        # interior plano, sin brillo central: solo viñeta hacia el borde
+        tt = (1.0 - f) ** 0.55
+        col = mezcla(oscuro, base, min(1.0, 0.30 + 0.70 * tt))
+        if f > 0.84:
+            col = mezcla(col, borde, (f - 0.84) * 1.4)
         d.polygon(
             _puntos_orbita(c, c, rr, fase, deformacion),
             fill=_rgba(col),
@@ -204,28 +221,24 @@ def _dibuja_cuerpo(
     img.alpha_composite(canto)
 
 
-def _dibuja_luz(img: Image.Image, c: float, r: float, p: dict, lado: int) -> None:
-    """Reflejo principal difuso + chispa especular."""
-    base = p["color"]
-    acento = p["acento"]
-    claro = mezcla(base, "#ffffff", 0.62)
-    rl = r * 0.24
-    pad = max(2.0, r * 0.08)
-    n = max(8, int(2 * (rl + pad)))
-    luz = Image.new("RGBA", (n, n), (0, 0, 0, 0))
-    ImageDraw.Draw(luz).ellipse(
-        (pad, pad + rl * 0.10, n - pad, n - pad - rl * 0.10),
-        fill=_rgba(mezcla(claro, acento, 0.35), 135),
+def _dibuja_simbolo(
+    img: Image.Image, c: float, r: float, p: dict, lado: int, unidad: float
+) -> None:
+    """Infinito crema en el centro; sin reflejo ni brillo interior."""
+    pts = puntos_simbolo(c, c, r)
+    trazo = [*pts, pts[0]]
+    capa = _capa(lado)
+    d = ImageDraw.Draw(capa)
+    ancho = max(1, int(round(1.7 * unidad)))
+    # sombra muy fina: mantiene el crema legible sobre estados claros (amarillo)
+    d.line(
+        trazo,
+        fill=_rgba(mezcla(p["color"], "#000000", 0.55), 80),
+        width=ancho + max(1, int(round(0.9 * unidad))),
+        joint="curve",
     )
-    luz = luz.filter(ImageFilter.GaussianBlur(max(1.0, pad / 1.7)))
-    img.alpha_composite(luz, (int(c - r * 0.34 - n / 2), int(c - r * 0.40 - n / 2)))
-
-    chispa = _capa(lado)
-    sd = ImageDraw.Draw(chispa)
-    px, py = c - r * 0.40, c - r * 0.44
-    pr = max(1.5, r * 0.042)
-    sd.ellipse((px - pr, py - pr, px + pr, py + pr), fill=_rgba("#ffffff", 215))
-    img.alpha_composite(chispa)
+    d.line(trazo, fill=_rgba(SIMBOLO, 235), width=ancho, joint="curve")
+    img.alpha_composite(capa)
 
 
 def _dibuja_efectos(
@@ -401,7 +414,7 @@ def dibuja_fotograma(
     """Orbe en RGBA de SIZE * escala píxeles por lado: fuera del orbe, transparente.
 
     Con ``efectos=False`` se omite la corona, las ondas y las partículas: queda
-    el cuerpo de vidrio con su halo, útil para iconos y avatares estáticos.
+    el cuerpo plano con su símbolo y su halo, útil para iconos y avatares.
     """
     p = parametros(estado, t, nivel)
     tam = round(SIZE * escala)
@@ -434,7 +447,7 @@ def dibuja_fotograma(
     img.alpha_composite(halo)
 
     _dibuja_cuerpo(img, c, r, p, estado, lado, unidad)
-    _dibuja_luz(img, c, r, p, lado)
+    _dibuja_simbolo(img, c, r, p, lado, unidad)
     if efectos:
         _dibuja_efectos(img, c, r, p, estado, t, lado, unidad)
 
@@ -1007,32 +1020,37 @@ class _Ventana:
         m = SIZE / 2
         r = (m - 16) * p["radio"]
         base = p["color"]
-        oscuro = mezcla(base, "#000000", 0.45)
+        oscuro = mezcla(base, "#04060b", 0.62)
+        borde = mezcla(base, p["acento"], 0.22)
         claro = mezcla(base, "#ffffff", 0.35)
-        # cuerpo con degradado radial: círculos concéntricos del borde al centro
+        # cuerpo plano con viñeta al borde: sin brillo ni reflejo interior
         pasos = 16
         for i in range(pasos, 0, -1):
             f = i / pasos
             rr = r * f
+            tt = (1.0 - f) ** 0.55
+            col = mezcla(oscuro, base, min(1.0, 0.30 + 0.70 * tt))
+            if f > 0.84:
+                col = mezcla(col, borde, (f - 0.84) * 1.4)
             c.create_oval(
                 m - rr,
                 m - rr,
                 m + rr,
                 m + rr,
                 outline="",
-                fill=mezcla(oscuro, claro, (1 - f) * p["brillo"]),
+                fill=col,
             )
-        # reflejo de luz
-        rr = r * 0.22
-        cx, cy = m - r * 0.32, m - r * 0.36
-        c.create_oval(
-            cx - rr,
-            cy - rr,
-            cx + rr,
-            cy + rr,
-            outline="",
-            fill=mezcla(claro, "#ffffff", 0.55),
+        # símbolo infinito crema (mismo trazo que la ventana con alfa)
+        pts = puntos_simbolo(m, m, r, n=72)
+        coords = [v for pt in pts for v in pt]
+        coords += coords[:2]
+        c.create_line(
+            *coords,
+            fill=mezcla(base, "#000000", 0.35),
+            width=4,
+            smooth=True,
         )
+        c.create_line(*coords, fill=SIMBOLO, width=2, smooth=True)
         # anillo giratorio (transcribiendo) o tres puntos orbitando (pensando)
         if self._estado == "transcribing":
             rr = r * 1.18

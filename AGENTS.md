@@ -17,7 +17,7 @@ La guía de uso está en [`README.md`](README.md); aquí va la ingeniería.
 4. Los comentarios y la documentación van **en español**; el código mantiene
    nombres y APIs del upstream en inglés.
 5. Antes de dar algo por terminado: `py_compile` de lo tocado y
-   `python -m unittest discover -s tests -t .` (**110 pruebas**).
+   `python -m unittest discover -s tests -t .` (**116 pruebas**).
 6. Si un cambio afecta una decisión grande (STT, TTS, LLM, build), anotarlo en
    `docs/specs/` con el formato de change spec ya usado.
 
@@ -62,7 +62,7 @@ octo/
 ├─ secret/                 OPENCODE_GO_API_KEY · FIRECRAWL_API_KEY (gitignored)
 ├─ models/                 modelos locales en desarrollo (faster-whisper)
 ├─ docs/specs/             change specs (búsqueda, whisper grande, etc.)
-├─ tests/                  suite unittest (110 pruebas)
+├─ tests/                  suite unittest (116 pruebas)
 ├─ samples/                voces Piper de muestra (wav)
 ├─ tools/                  make_orb_icon.py
 └─ openocto/
@@ -419,7 +419,9 @@ Ventana en hilo propio. Intenta `_VentanaAlfa` (Win32 layered + Pillow, alfa
 por píxel, DPI-aware); si falta Pillow o falla, usa `_Ventana` (Tk). Acciones
 por cola: `show`, `state`, `end`, `close`. **`state` no hace visible la
 ventana: solo `show`.** Cualquier camino nuevo de conversación debe llamar
-`orb.show()` (ver runbook).
+`orb.show()` (ver runbook). El cuerpo es plano (sin brillo interior) y lleva un
+infinito crema centrado (`puntos_simbolo`, lemniscata de Gerono); los efectos
+por estado se dibujan por fuera.
 
 ### `openocto/utils/`
 
@@ -552,7 +554,7 @@ print("show en _inject_text:", "show" in ops)
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -t .
-# Ran 110 tests in ~2 s ... OK
+# Ran 116 tests in ~2 s ... OK
 ```
 
 | Archivo | Cubre |
@@ -561,8 +563,9 @@ print("show en _inject_text:", "show" in ops)
 | `test_web_search.py` | Firecrawl 401/402 → DDG, límites, errores |
 | `test_greet.py` | `_inject_text`, `_auto_greet`, orb.show, config |
 | `test_dates.py` | `fecha_es`/`hora_es` y `_fecha_block` |
-| `test_orb.py` | geometría/estados del orbe |
+| `test_orb.py` | geometría, símbolo y estados del orbe |
 | `test_llm.py` | presupuesto de 2 búsquedas y respuesta final |
+| `test_router.py` | el mensaje actual no viaja dos veces al modelo |
 | `test_cli.py` | `--console` y comando por defecto |
 | `test_hotkey.py`, `test_teclas.py`, `test_audio_texto.py`, `test_memoria.py`, `test_historial.py` | utilidades y memoria |
 
@@ -664,6 +667,19 @@ Los tests no descargan el modelo grande ni abren micrófono.
   STT/LLM/TTS por turno. Útil para decidir `beam_size`, GPU o el fallback por
   latencia.
 
+### 12.14 La IA dice que la escuchas doble / que repites lo mismo
+
+- **Causa típica:** el turno actual viajaba dos veces al modelo. `app.py`
+  guardaba el mensaje del usuario **antes** de `build_context`, el historial ya
+  lo incluía y `AIRouter.send_streaming` lo volvía a añadir como mensaje actual.
+  Se notaba sobre todo al arrancar (turno del saludo).
+- **Corregido:** el contexto se construye antes de persistir el mensaje y el
+  router descarta el último mensaje del historial si es idéntico al actual
+  (`test_router.py`).
+- Si lo que se duplica es el **audio** (dos voces), revisa eco del TTS,
+  `continuous_tail_guard` y que Vosk esté pausado durante playback; no es este
+  caso.
+
 ---
 
 ## 13. Invariantes y decisiones
@@ -695,3 +711,4 @@ Los tests no descargan el modelo grande ni abren micrófono.
   (Brave Search) sería más estable.
 - `openocto/__main__.py` conserva el CLI upstream (click) con comandos de
   usuarios/micrófono; la entrada real de Samantha es `assistant.py`.
+

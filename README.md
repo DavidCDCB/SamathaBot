@@ -34,6 +34,8 @@ Micrófono -> Silero VAD (corta al callar) -> conversación continua
   respaldo DuckDuckGo también ante `401` (key inválida), no solo `402`.
 - **Portable:** `build_portable.py --gpu` incluye las DLLs de CUDA;
   `--with-key` copia OpenCode **y** Firecrawl.
+- **Orbe rediseñado:** interior plano (sin brillos ni reflejos) con un símbolo
+  de infinito crema centrado; se conservan colores por estado, halo y animación.
 
 ## Requisitos
 
@@ -95,7 +97,8 @@ el micrófono se reabre solo (chime al abrir y al cerrar cada toma).
 - El atajo es **global** (funciona en segundo plano) y se cambia en
   `audio.ptt_hotkey`.
 - El **orbe** aparece al activar la conversación y se puede arrastrar; muestra
-  esperando/escuchando/transcribiendo/pensando/hablando. Se desactiva con
+  esperando/escuchando/transcribiendo/pensando/hablando. Interior plano con un
+  **infinito crema** (sin brillos) y halo por estado. Se desactiva con
   `ui.orb: false`.
 - La conversación va coloreada (Tú en cian, Samantha en verde); `NO_COLOR=1`
   la deja sin color.
@@ -316,13 +319,13 @@ Referencia técnica completa (módulos, diagramas, runbook):
 | `models/` | faster-whisper (desarrollo) |
 | `~\.openocto\` | fuera del repo: modelos e `history.db` (memoria) |
 | `docs/specs/` | change specs de las funciones grandes |
-| `tests/` | suite (110 pruebas) |
+| `tests/` | suite (116 pruebas) |
 
 ## Pruebas
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -t .
-# Ran 110 tests ... OK
+# Ran 116 tests ... OK
 ```
 
 ## Privacidad

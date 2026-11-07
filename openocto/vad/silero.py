@@ -36,6 +36,9 @@ class SileroVAD(VADEngine):
         self._speech_streak = 0
         self.last_prob = 0.0
         self.last_rms = 0.0
+        # Throttle del debug por chunk: con silencio continuo son ~12 lineas/s
+        # y entierran el resto del log (respuesta del modelo, tool calls).
+        self._last_rms_log = 0.0
 
         model_path = get_silero_vad_model()
         import onnxruntime as ort
@@ -101,11 +104,14 @@ class SileroVAD(VADEngine):
 
         if rms_raw < self._rms_threshold:
             self.last_prob = 0.0
-            logger.debug(
-                "VAD rms_raw=%.0f < thr=%d -> silencio (sin Silero)",
-                rms_raw,
-                self._rms_threshold,
-            )
+            ahora = time.monotonic()
+            if ahora - self._last_rms_log >= 1.0:
+                self._last_rms_log = ahora
+                logger.debug(
+                    "VAD rms_raw=%.0f < thr=%d -> silencio (sin Silero)",
+                    rms_raw,
+                    self._rms_threshold,
+                )
             return False
 
         audio_f32 = chunk_i16.astype(np.float32) / 32768.0

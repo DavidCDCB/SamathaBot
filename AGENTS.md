@@ -384,7 +384,9 @@ auto-despertarse. El callback llega al loop con `call_soon_threadsafe`.
 - `capture.py`: `sounddevice.InputStream`, mono 16 kHz, bloque 1280; resuelve
   dispositivo por índice o subcadena y cae al predeterminado si falla; ganancia
   y normalización; `wait_ready()` para micros lentos; stream caliente entre
-  turnos.
+  turnos. Con `input_device: null` **sigue el predeterminado de Windows**:
+  un watchdog cada 0,5 s reabre el stream si el default cambia de índice o si
+  pasan 2,5 s sin chunks (audífonos desconectados, Bluetooth caído).
 - `player.py`: `OutputStream`, fundidos, limitador suave con `gain`, chimes de
   dos notas.
 
@@ -455,6 +457,9 @@ Notas que ya costaron debugging:
 - MiniMax M3.1 Flash: `reasoning_effort` acepta `low|medium|high|xhigh|max`.
   `none|auto|adaptive` → HTTP 400 (`reasoning effort … is not allowed`).
   Con `high` hay que subir `max_tokens` (4000) o la respuesta sale vacía.
+  Cada modelo publica su propia escalera (algunos no publican ninguna) en
+  `GET /inference/go/v1/models` → `data[].capabilities.reasoning.effort`.
+  Todos los modelos de texto la declaran con `supported: true`.
 - `rms_speech_threshold: 300` con micro lejano hacía que ni llegara a Silero;
   el valor actual es **50**.
 - `stt.hotwords` se inyecta como `initial_prompt`; corrige nombres propios
@@ -608,6 +613,10 @@ Los tests no descargan el modelo grande ni abren micrófono.
 
 - `OrbController.show()` es **lo único** que hace visible la ventana;
   `state()` solo cambia el estado.
+- Al arrancar, `OpenOctoApp.run()` llama `_show_orb_at_start()` (start +
+  `state("waiting")` + show) **antes** de `_init_components()`: el orbe gris
+  aparece de inmediato mientras cargan whisper/Piper. Si se reordena el
+  arranque, mantener esa llamada primero (lo cubre `test_greet.py`).
 - El saludo (`_inject_text`) debe llamar `show()` antes del turno. Cualquier
   camino nuevo de conversación también.
 - Verifica `ui.orb: true`. Y que el exe sea posterior al fix (sonda §10).
@@ -679,6 +688,40 @@ Los tests no descargan el modelo grande ni abren micrófono.
 - Si lo que se duplica es el **audio** (dos voces), revisa eco del TTS,
   `continuous_tail_guard` y que Vosk esté pausado durante playback; no es este
   caso.
+
+### 12.15 La asistente lee “barra think” / el log no registra la respuesta
+
+- **Causa:** MiniMax M3.1 manda normalmente el razonamiento en
+  `delta.reasoning_content` (que el backend ignora), pero a veces filtra las
+  etiquetas de pensamiento dentro de `delta.content`. Como no había filtro, la
+  etiqueta de cierre llegaba al TTS y Edge la pronunciaba literalmente
+  (“barra think”). El log no registraba la respuesta porque el camino real de
+  cada turno (`_tool_loop`, siempre que hay skills) nunca logueaba el texto y
+  el camino sin tools solo logueaba la longitud.
+- **Corregido:** `_ThinkScrubber` en `openai_compat.py` elimina los bloques de
+  razonamiento del stream (etiquetas partidas entre deltas, cierre huérfano y
+  variante `<thinking>`), cableado en `send`, `send_streaming`, `_tool_loop` y
+  `_final_answer`. Cada turno deja una línea INFO
+  `go respuesta del turno (N chars): …` (texto truncado a 500). El debug de
+  RMS del VAD se limita a 1 línea/s para no pudrir el log.
+- **Verificar:** `tests/test_llm.py` (clase `ThinkScrubberTest`) y, tras un
+  turno real, `logs\assistant.log` debe contener la línea
+  `respuesta del turno`.
+
+### 12.16 Deja de escuchar al desconectar los audífonos
+
+- **Causa:** el stream de PortAudio queda atado al dispositivo que se abrió.
+  En conversación continua (o con wake word) se mantiene caliente entre turnos,
+  así que al desconectar los audífonos el índice viejo deja de entregar chunks
+  y Samantha "no oye" aunque ya uses otro micrófono.
+- **Corregido:** con `audio.input_device: null` se consulta el predeterminado
+  de Windows en cada apertura y un watchdog (`openocto/audio/capture.py`,
+  `_check_stream_health`) reabre el stream si: cambia el índice predeterminado
+  o pasan 2,5 s sin callbacks. Si había un dispositivo fijado por nombre/índice
+  y desaparece, cae al predeterminado y lo sigue desde ahí.
+- **Verificar:** `tests/test_audio_device.py`; en vivo, desconectar los
+  audífonos y ver en el log `Micrófono predeterminado cambió (#x → #y)` o
+  `Sin audio del micrófono…` seguido de `Micrófono reabierto`.
 
 ---
 

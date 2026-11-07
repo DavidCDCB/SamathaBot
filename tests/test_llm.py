@@ -204,5 +204,119 @@ class StreamingTest(unittest.TestCase):
         )
 
 
+class ThinkScrubberTest(unittest.TestCase):
+    """El texto audible nunca debe llevar etiquetas de razonamiento.
+
+    Las etiquetas se construyen con chr(60)/chr(62) para que este archivo no
+    contenga el bloque completo (algunos filtros de edición lo corrompen).
+    """
+
+    AP = chr(60) + "think" + chr(62)
+    CI = chr(60) + "/" + "think" + chr(62)
+    APl = chr(60) + "thinking" + chr(62)
+    CIl = chr(60) + "/" + "thinking" + chr(62)
+
+    def _run(self, trozos):
+        from openocto.ai.openai_compat import _ThinkScrubber
+
+        s = _ThinkScrubber()
+        out = [s.feed(t) for t in trozos]
+        out.append(s.flush())
+        return "".join(out)
+
+    def test_bloque_de_razonamiento_se_descarta(self):
+        self.assertEqual(
+            self._run([self.AP + "no leer" + self.CI + "Hola."]),
+            "Hola.",
+        )
+
+    def test_etiqueta_partida_entre_deltas(self):
+        # Cada etiqueta puede llegar dividida en trozos; el prefijo dudoso se
+        # retiene y solo se emite si se confirma que NO era una etiqueta.
+        self.assertEqual(
+            self._run(
+                [
+                    "Va",
+                    chr(60) + "thi",
+                    "nk>no leas esto",
+                    chr(60) + "/th",
+                    "ink> bien",
+                ]
+            ),
+            "Va bien",
+        )
+
+    def test_cierre_suelto_sin_apertura(self):
+        # El gateway a veces deja la etiqueta de cierre huerfana en content.
+        self.assertEqual(self._run(["Respuesta" + self.CI]), "Respuesta")
+
+    def test_prefijo_parcial_al_final_no_se_emite(self):
+        self.assertEqual(self._run(["Texto " + chr(60) + "thi"]), "Texto ")
+
+    def test_texto_normal_con_angulos_se_conserva(self):
+        self.assertEqual(self._run(["10 < 15 y ", "a < b"]), "10 < 15 y a < b")
+
+    def test_variante_thinking_larga(self):
+        self.assertEqual(
+            self._run([self.APl + "pienso" + self.CIl + "Listo."]),
+            "Listo.",
+        )
+
+    def test_streaming_no_emite_etiquetas(self):
+        b, _ = _backend(
+            [[_chunk(self.AP + "Razon" + "ando" + self.CI), _chunk("Hola")]]
+        )
+        emitido = []
+
+        async def on_chunk(texto):
+            emitido.append(texto)
+
+        msgs = [{"role": "user", "content": "hola"}]
+        texto = asyncio.run(b.send_streaming(msgs, "sistema", on_chunk))
+        self.assertEqual(texto, "Hola")
+        for trozo in emitido:
+            self.assertNotIn(chr(60), trozo)
+
+    def test_tool_loop_filtra_y_registra_respuesta(self):
+        # Con skills cargadas (el camino real de cada turno) la respuesta debe
+        # quedar registrada en el log, incluso con razonamiento inline.
+        primera = [
+            _chunk(
+                None,
+                [
+                    _llamada(
+                        0,
+                        id="c1",
+                        name="manage_notes_and_facts",
+                        arguments='{"action": "list_notes"}',
+                    )
+                ],
+            )
+        ]
+        segunda = [
+            _chunk(self.AP + "pensamiento" + self.CI + "Tengo una nota."),
+            _chunk(None),
+        ]
+        b, _ = _backend([primera, segunda])
+        herramientas = _Herramientas()
+        emitido = []
+
+        async def on_chunk(texto):
+            emitido.append(texto)
+
+        msgs = [{"role": "user", "content": "lista mis notas"}]
+        with self.assertLogs("openocto.ai.openai_compat", level="INFO") as logs:
+            texto = asyncio.run(
+                b.send_streaming(msgs, "sistema", on_chunk, skills=herramientas)
+            )
+        self.assertEqual(texto, "Tengo una nota.")
+        self.assertEqual(emitido, ["Tengo una nota."])
+        # La respuesta queda registrada en el log (era el bug reportado).
+        self.assertTrue(
+            any("Tengo una nota." in linea for linea in logs.output),
+            f"respuesta no registrada en log: {logs.output}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

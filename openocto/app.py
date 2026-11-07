@@ -641,6 +641,11 @@ class OpenOctoApp:
         print(ui.dim(f"{MIC} Preparando micrófono..."), end="\r", flush=True)
         if not await self._capture.wait_ready(timeout=2.0):
             logger.warning("El micrófono no entregó audio a tiempo")
+            # Puede ser el dispositivo anterior (audífonos recién
+            # desconectados): reabro en el predeterminado actual y reintento.
+            self._capture.reopen_now()
+            if not await self._capture.wait_ready(timeout=2.0):
+                logger.warning("Sigue sin audio tras reabrir el micrófono")
         if self._state_machine.state != State.RECORDING:
             self._capture.stop()
             return
@@ -1128,9 +1133,28 @@ class OpenOctoApp:
         self._orb.close()
         logger.debug("cleanup")
 
+    def _show_orb_at_start(self) -> None:
+        """Muestra el orbe en gris antes de cargar modelos.
+
+        `start()` lanza la ventana en su hilo (empieza oculta); `state()` solo
+        cambia el estado y `show()` es lo único que la hace visible. El orden
+        importa: si se llama a `state("waiting")` después de `show()`, la
+        ventana puede quedar un instante con el estilo por defecto.
+        """
+        if not self._config.ui.orb:
+            return
+        self._orb.start()
+        self._orb.state("waiting")
+        self._orb.show()
+
     async def run(self) -> None:
         """Main application loop."""
         self._loop = asyncio.get_running_loop()
+
+        # El orbe aparece desde el primer instante, en gris ("waiting").
+        # _init_components (whisper, Piper) tarda decenas de segundos y antes
+        # no había ninguna señal visual hasta que terminaba.
+        self._show_orb_at_start()
 
         # Ensure cleanup on SIGTERM/SIGHUP (terminal close)
         import signal
@@ -1264,7 +1288,6 @@ class OpenOctoApp:
                 )
             )
         print(ui.dim(f"   {hint} · [Ctrl+C] sale\n"))
-        self._orb.start()
         self._start_wakeword()
         listener.start()
         if self._config.wakeword.greet_on_start:

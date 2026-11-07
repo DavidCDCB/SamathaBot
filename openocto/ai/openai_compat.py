@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import openai
@@ -32,6 +33,8 @@ _TOOL_LOOP_FALLBACK = (
     "No encontré una respuesta concluyente con lo que pude consultar. "
     "¿Me lo preguntas de otra forma?"
 )
+# Longitud máxima del texto de respuesta que se registra en el log.
+_LOG_RESPONSE_CHARS = 500
 
 
 def _sanitize_messages(messages: list[dict]) -> list[dict]:
@@ -53,6 +56,97 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
                 item[clave] = mensaje[clave]
         limpios.append(item)
     return limpios
+
+
+class _ThinkScrubber:
+    """Quita los bloques de razonamiento (etiquetas think) del texto en streaming.
+
+    MiniMax M3.1 suele mandar el razonamiento en ``delta.reasoning_content``
+    (que este backend ignora), pero a veces filtra las etiquetas de pensamiento
+    dentro del ``content`` normal. Si esas etiquetas llegan al TTS, Edge las
+    lee en voz alta ("barra think") y el usuario oye basura.
+
+    Es incremental: una etiqueta puede llegar partida entre deltas. El texto
+    que podría ser el inicio de una etiqueta se retiene hasta el siguiente
+    delta y se emite o descarta según se confirme.
+    """
+
+    _OPEN_RE = re.compile(r"<think(?:ing)?>", re.IGNORECASE)
+    _CLOSE_RE = re.compile(r"</think(?:ing)?>", re.IGNORECASE)
+    # Etiquetas literales (en minúsculas) para detectar sufijos incompletos.
+    _TAGS = ("<think>", "<thinking>", "</think>", "</thinking>")
+    _MAX_PARTIAL = max(len(t) for t in _TAGS) - 1
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._inside = False
+
+    def feed(self, delta: str) -> str:
+        """Añade un trozo del stream y devuelve el texto limpio listo para usar."""
+        self._buf += delta
+        return self._consume(final=False)
+
+    def flush(self) -> str:
+        """Cierra el filtro: emite lo retenido pendiente (o lo tira si era el
+        inicio de una etiqueta)."""
+        return self._consume(final=True)
+
+    def _held_len(self, text: str) -> int:
+        """Longitud del sufijo de `text` que aún podría empezar una etiqueta."""
+        bajo = text.lower()
+        for k in range(min(len(bajo), self._MAX_PARTIAL), 0, -1):
+            if any(etiqueta.startswith(bajo[-k:]) for etiqueta in self._TAGS):
+                return k
+        return 0
+
+    def _consume(self, final: bool) -> str:
+        trozos: list[str] = []
+        while True:
+            if self._inside:
+                m = self._CLOSE_RE.search(self._buf)
+                if not m:
+                    if final:
+                        # Stream truncado dentro del razonamiento: se descarta.
+                        self._buf = ""
+                    else:
+                        retenido = self._held_len(self._buf)
+                        self._buf = (
+                            self._buf[len(self._buf) - retenido :] if retenido else ""
+                        )
+                    break
+                self._buf = self._buf[m.end() :]
+                self._inside = False
+                continue
+
+            m_open = self._OPEN_RE.search(self._buf)
+            m_close = self._CLOSE_RE.search(self._buf)
+            primer = None
+            for m in (m_open, m_close):
+                if m is not None and (primer is None or m.start() < primer[0].start()):
+                    primer = (m, m_open is m)
+            if primer is None:
+                if final:
+                    # Lo que queda es solo el prefijo dudoso de una etiqueta
+                    # (todo lo demás ya se emitió en su momento): no es habla.
+                    self._buf = ""
+                else:
+                    retenido = self._held_len(self._buf)
+                    corte = len(self._buf) - retenido
+                    trozos.append(self._buf[:corte])
+                    self._buf = self._buf[corte:]
+                break
+            m, es_apertura = primer
+            trozos.append(self._buf[: m.start()])
+            self._buf = self._buf[m.end() :]
+            if es_apertura:
+                self._inside = True
+        return "".join(trozos)
+
+    @classmethod
+    def strip(cls, text: str) -> str:
+        """Versión no incremental (para respuestas completas, sin streaming)."""
+        scrub = cls()
+        return scrub.feed(text) + scrub.flush()
 
 
 class OpenAICompatBackend(AIBackend):
@@ -146,7 +240,7 @@ class OpenAICompatBackend(AIBackend):
             messages=all_messages,
             **self._gen_kwargs(),
         )
-        text = response.choices[0].message.content or ""
+        text = _ThinkScrubber.strip(response.choices[0].message.content or "")
         logger.debug("%s response (%d chars)", self._name, len(text))
         return text
 
@@ -161,40 +255,56 @@ class OpenAICompatBackend(AIBackend):
             {"role": "system", "content": system_prompt},
             *_sanitize_messages(messages),
         ]
-        if skills is not None and len(skills) > 0:
-            return await self._tool_loop(all_messages, skills, on_chunk)
-
-        stream = await self._client.chat.completions.create(
-            model=self._model,
-            messages=all_messages,
-            stream=True,
-            **self._turn_kwargs(),
-        )
-        parts: list[str] = []
         finish_reason: str | None = None
-        async for chunk in stream:
-            if (
-                not chunk.choices
-            ):  # algunos proveedores envían un chunk final sin choices
-                continue
-            choice = chunk.choices[0]
-            finish_reason = choice.finish_reason or finish_reason
-            delta = choice.delta.content
-            if delta:
-                parts.append(delta)
-                await on_chunk(delta)
-        response = "".join(parts)
-        logger.debug(
-            "%s stream response (%d chars, finish=%s)",
+        if skills is not None and len(skills) > 0:
+            response = await self._tool_loop(all_messages, skills, on_chunk)
+        else:
+            stream = await self._client.chat.completions.create(
+                model=self._model,
+                messages=all_messages,
+                stream=True,
+                **self._turn_kwargs(),
+            )
+            scrub = _ThinkScrubber()
+            parts: list[str] = []
+            async for chunk in stream:
+                if (
+                    not chunk.choices
+                ):  # algunos proveedores envían un chunk final sin choices
+                    continue
+                choice = chunk.choices[0]
+                finish_reason = choice.finish_reason or finish_reason
+                delta = choice.delta.content
+                if delta:
+                    limpio = scrub.feed(delta)
+                    if limpio:
+                        parts.append(limpio)
+                        await on_chunk(limpio)
+            final = scrub.flush()
+            if final:
+                parts.append(final)
+                await on_chunk(final)
+            response = "".join(parts)
+            logger.debug(
+                "%s stream response (%d chars, finish=%s)",
+                self._name,
+                len(response),
+                finish_reason,
+            )
+        # Queda SIEMPRE registrado lo que respondió el modelo (hasta ahora solo
+        # se logueaba la longitud, y el tool loop directamente nada).
+        logger.info(
+            "%s respuesta del turno (%d chars): %s",
             self._name,
             len(response),
-            finish_reason,
+            response[:_LOG_RESPONSE_CHARS]
+            + ("…" if len(response) > _LOG_RESPONSE_CHARS else ""),
         )
         if not response.strip():
             logger.warning(
                 "%s devolvio contenido vacio (finish=%s); puede ser limite de razonamiento",
                 self._name,
-                finish_reason,
+                finish_reason if finish_reason is not None else "-",
             )
         return response
 
@@ -217,6 +327,9 @@ class OpenAICompatBackend(AIBackend):
         tools = skills.openai_tools()
         spoken: list[str] = []
         research_calls = 0
+        # Un unico filtro para todo el turno: una etiqueta puede quedar partida
+        # entre dos deltas, incluso al pasar de una vuelta del loop a la siguiente.
+        scrub = _ThinkScrubber()
 
         for _ in range(_MAX_TOOL_ITERATIONS):
             stream = await self._client.chat.completions.create(
@@ -233,9 +346,11 @@ class OpenAICompatBackend(AIBackend):
                     continue
                 delta = chunk.choices[0].delta
                 if delta.content:
-                    round_text.append(delta.content)
-                    spoken.append(delta.content)
-                    await on_chunk(delta.content)
+                    limpio = scrub.feed(delta.content)
+                    if limpio:
+                        round_text.append(limpio)
+                        spoken.append(limpio)
+                        await on_chunk(limpio)
                 for tc in delta.tool_calls or []:
                     idx = tc.index if tc.index is not None else len(calls)
                     slot = calls.setdefault(
@@ -249,6 +364,10 @@ class OpenAICompatBackend(AIBackend):
                         slot["arguments"] += tc.function.arguments or ""
 
             if not calls:
+                final = scrub.flush()
+                if final:
+                    spoken.append(final)
+                    await on_chunk(final)
                 return "".join(spoken)
 
             ordered = [calls[i] for i in sorted(calls)]
@@ -293,9 +412,13 @@ class OpenAICompatBackend(AIBackend):
                     "Research budget reached (%d); forcing final answer",
                     research_calls,
                 )
-                return await self._final_answer(convo, spoken, on_chunk)
+                return await self._final_answer(convo, spoken, on_chunk, scrub)
 
         logger.info("Tool loop hit max iterations (%d)", _MAX_TOOL_ITERATIONS)
+        final = scrub.flush()
+        if final:
+            spoken.append(final)
+            await on_chunk(final)
         spoken.append(_TOOL_LOOP_FALLBACK)
         await on_chunk(_TOOL_LOOP_FALLBACK)
         return "".join(spoken)
@@ -305,6 +428,7 @@ class OpenAICompatBackend(AIBackend):
         convo: list[dict[str, Any]],
         spoken: list[str],
         on_chunk: Callable[[str], Awaitable[None]],
+        scrub: _ThinkScrubber,
     ) -> str:
         """Cierra el turno sin herramientas tras agotar la investigación."""
         final_parts: list[str] = []
@@ -320,9 +444,16 @@ class OpenAICompatBackend(AIBackend):
                     continue
                 delta = chunk.choices[0].delta.content
                 if delta:
-                    final_parts.append(delta)
-                    spoken.append(delta)
-                    await on_chunk(delta)
+                    limpio = scrub.feed(delta)
+                    if limpio:
+                        final_parts.append(limpio)
+                        spoken.append(limpio)
+                        await on_chunk(limpio)
+            final = scrub.flush()
+            if final:
+                final_parts.append(final)
+                spoken.append(final)
+                await on_chunk(final)
         except Exception:
             logger.exception("Final answer without tools failed")
             spoken.append(_TOOL_LOOP_FALLBACK)

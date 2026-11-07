@@ -123,6 +123,59 @@ class AutoGreetTest(unittest.TestCase):
         self.assertEqual(got, ["Hola Samantha"])
 
 
+class OrbAtStartupTest(unittest.TestCase):
+    def _app_con_registro(self):
+        app = _bare_app()
+        eventos = []
+
+        def _registro(nombre):
+            def _f(*args):
+                eventos.append(nombre if not args else (nombre, args[0]))
+
+            return _f
+
+        app._orb = NS(
+            start=_registro("orb.start"),
+            state=_registro("orb.state"),
+            show=_registro("orb.show"),
+        )
+        app._config.ui.orb = True
+        return app, eventos
+
+    def test_orb_gris_antes_de_cargar_modelos(self):
+        app, eventos = self._app_con_registro()
+
+        async def fake_resolve():
+            return 1, "User"
+
+        async def fake_health():
+            return True, "ok"
+
+        async def fake_ptt(header):
+            eventos.append("run_ptt")
+
+        app._resolve_user = fake_resolve
+        app._nombre_conocido = lambda uid: True
+        app._persona = NS(display_name="Samantha")
+        app._init_components = lambda: eventos.append("init_components")
+        app._ai_router = NS(active_backend_name="go", health_check=fake_health)
+        app._run_ptt_mode = fake_ptt
+
+        asyncio.run(app.run())
+
+        self.assertEqual(
+            eventos[:4],
+            ["orb.start", ("orb.state", "waiting"), "orb.show", "init_components"],
+        )
+        self.assertEqual(eventos[-1], "run_ptt")
+
+    def test_respeta_ui_orb_desactivado(self):
+        app, eventos = self._app_con_registro()
+        app._config.ui.orb = False
+        app._show_orb_at_start()
+        self.assertEqual(eventos, [])
+
+
 class ConfigTest(unittest.TestCase):
     def test_defaults_off(self):
         cfg = AppConfig()

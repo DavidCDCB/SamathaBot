@@ -5,6 +5,11 @@
 persona: "samantha"
 
 audio:
+  # null = sigue SIEMPRE el micrófono predeterminado de Windows en el momento.
+  # Si conectas/desconectas los audífonos, el watchdog de
+  # openocto/audio/capture.py reabre el stream en el nuevo predeterminado.
+  # Un número (índice) o un texto (subcadena del nombre, ej. "headset") lo
+  # fija; si ese dispositivo desaparece, cae al predeterminado.
   input_device: null
   output_device: null
   sample_rate: 16000
@@ -132,7 +137,7 @@ ai:
       api_key: "${OPENCODE_GO_API_KEY}"
       # MODELO ACTIVO: cambia solo esta línea y reinicia. Después valida con
       #   python assistant.py check
-      model: "minimax-m3.1-flash"
+      model: "claude-haiku-5-5"
       # El endpoint openai/v1 sirve para TODOS los modelos de texto de Go
       # (el gateway traduce a la API nativa de cada modelo).
       base_url: "https://opencode.ai/inference/go/openai/v1"
@@ -141,66 +146,116 @@ ai:
         # Go responde 400 sin x-opencode-session: es requisito de ruteo.
         # OpenOcto no inyecta id por conversación; valor fijo y estable.
         x-opencode-session: "octo-terminal-01"
-      # Esfuerzo de razonamiento: SOLO algunos modelos lo respetan.
-      # MiniMax M3.1 Flash: low, medium, high, xhigh, max.
-      # "none", "auto" y "adaptive" dan HTTP 400; omitir equivale a max.
-      # Para voz, "low" es el más rápido. Con high/max sube max_tokens,
-      # porque el razonamiento cuenta dentro del tope.
+      # Esfuerzo de razonamiento: cuánto "piensa" el modelo antes de responder.
+      # Todos los modelos de texto de Go soportan razonamiento; lo que cambia
+      # es la escalera de niveles que publica cada uno (algunos no publican
+      # ninguna). La fuente de verdad es:
+      #   GET https://opencode.ai/inference/go/v1/models
+      #   -> data[].capabilities.reasoning.effort
+      # Omitir la clave = nivel por defecto del proveedor (normalmente máximo).
+      #
+      # Niveles publicados por modelo (plan Go, 2026-11):
+      #   minimax-m3.1-flash  low | medium | high | xhigh | max   ← actual
+      #   claude-haiku-5-5    low | medium | high | xhigh | max
+      #   gpt-6-luna          none | low | medium | high | xhigh | max
+      #   gpt-5.6-luna        none | low | medium | high | xhigh | max
+      #   glm-5.3 / 5.3-flash low | high | max
+      #   glm-5.2             high | max
+      #   deepseek-v4.1-flash low | high | max
+      #   deepseek-v4-pro     high | max
+      #   kimi-k3.1-pro       low | high | max
+      #   kimi-k3             max
+      #   qwen3.8-flash/max   low | medium | xhigh
+      #   gemini-4-argon      low | medium | high
+      #   grok-4.7            low | medium | high | xhigh
+      #   step-5-preview      low | medium | high
+      #   hy3                 none | low | high
+      #   hy4 / hy4-preview   none | high
+      #   muse-spark-1.x      minimal | low | medium | high | xhigh
+      #   beam-free           low | medium | high | xhigh | max
+      #   SIN niveles publicados (deja la clave vacía):
+      #     minimax-m3, longcat-2.0, mimo-v2.6-flash, mimo-v2.6-pro,
+      #     qwen3.7-plus, kimi-k2.7-code, iceman-contributor-free
+      #
+      # Para VOZ, low o medium: cada token pensado retrasa el primer audio y
+      # además cuenta dentro de ai.max_tokens (con high/max usa 4000).
+      # MiniMax rechaza "none", "auto" y "adaptive" con HTTP 400.
+      # Un nivel fuera de la lista hoy no da error, pero no garantiza efecto:
+      # cíñete a los publicados.
       reasoning_effort: "high"
 
       # ═══════════════════════════════════════════════════════════════════
       # MODELOS RECOMENDADOS (plan Go: $10/mes; el "límite" es el uso mensual
-      # incluido POR MODELO, no una suscripción aparte).
-      # Precio por 1M tokens: entrada/salida. TTFT medido en este equipo.
-      # IDs exactos; cualquier cambio se valida con `assistant.py check`.
+      # incluido POR MODELO, no una suscripción aparte). Precio por 1M tokens:
+      # entrada/salida. TTFT medido en este equipo. "razona" = niveles que
+      # publica el modelo (capabilities.reasoning.effort); "sin niveles" =
+      # deja reasoning_effort vacío. IDs exactos; cualquier cambio se valida
+      # con `assistant.py check`.
       # ═══════════════════════════════════════════════════════════════════
       #
-      # ── PARA VOZ (respuesta rápida; el caso normal) ──────────────────
-      # glm-5.3-flash      $0.15/$0.50   lím. $60  ← actual. TTFT 1,24 s,
-      #                                        sin razonamiento visible: el
-      #                                        mejor equilibrio español+voz.
-      # mimo-v2.6-flash    $0.14/$0.28   lím. $60  el más barato. TTFT 1,40 s.
-      # qwen3.8-flash      $0.15/$0.47   lím. $30  rápido, muy buen español.
-      # minimax-m3.1-flash $0.15/$0.60   lím. $20
-      # minimax-m3         $0.30/$1.20   lím. $60
-      # claude-haiku-5-5   $0.10/$0.50   lím. $15  voz natural y rápida;
-      #                                        tope de uso más bajo.
-      # gpt-6-luna         $0.10/$0.50   lím. $15
-      # gpt-5.6-luna       $0.20/$1.20   lím. $15
-      # hy3                $0.14/$0.58   lím. $60
-      # longcat-2.0        $0.30/$1.20   lím. $60
+      # ── PARA EL TURNO DE VOZ (respuesta corta y rápida; el caso normal) ──
+      # No son modelos de audio: son LLM de texto usados detrás del STT/TTS.
+      # Importa el TTFT bajo, el español y el costo por conversación continua.
+      # glm-5.3-flash      $0.15/$0.50   lím. $60  razona low|high|max
+      #                                        TTFT 1,24 s, sin razonamiento
+      #                                        visible: el mejor equilibrio
+      #                                        español+voz.
+      # mimo-v2.6-flash    $0.14/$0.28   lím. $60  sin niveles. El más
+      #                                        barato. TTFT 1,40 s.
+      # qwen3.8-flash      $0.15/$0.47   lím. $30  razona low|medium|xhigh
+      #                                        rápido, muy buen español.
+      # minimax-m3.1-flash $0.15/$0.60   lím. $20  razona low|medium|high|
+      #                                        xhigh|max   ← actual
+      # minimax-m3         $0.30/$1.20   lím. $60  sin niveles
+      # claude-haiku-5-5   $0.10/$0.50   lím. $15  razona low|medium|high|
+      #                                        xhigh|max. Voz natural y
+      #                                        rápida; tope de uso más bajo.
+      # gpt-6-luna         $0.10/$0.50   lím. $15  razona none|low|medium|
+      #                                        high|xhigh|max
+      # gpt-5.6-luna       $0.20/$1.20   lím. $15  razona none|low|medium|
+      #                                        high|xhigh|max
+      # hy3                $0.14/$0.58   lím. $60  razona none|low|high
+      # longcat-2.0        $0.30/$1.20   lím. $60  sin niveles
       #
       # ── CALIDAD / CONVERSACIÓN (más lentos o más caros) ──────────────
       # deepseek-v4.1-flash $0.15/$0.60 off-peak, $0.30/$1.20 peak, lím. $100
-      #                    razona antes de responder; con
-      #                    reasoning_effort: "none" queda apto para voz.
+      #                    razona low|high|max. Con low queda apto para voz.
       #                    TTFT medido 1,78 s sin ese ajuste.
-      # glm-5.3            $1.40/$4.40   lím. $15  más capaz que el flash.
-      # glm-5.2            $1.40/$4.40   lím. $60  alternativa GLM con más cupo.
-      # kimi-k3.1-pro      $2.00/$10.00  lím. $15  tope de calidad; para
-      #                                        preguntas complejas, no voz.
-      # qwen3.8-max        $2.00/$6.00   lím. $15
-      # qwen3.7-plus       $0.40/$1.60   lím. $60  (≤256K tokens)
-      # gemini-4-argon     $2.00/$10.00  lím. $30  excelente multilingüe
-      #                                        (precio con 50% de descuento).
-      # grok-4.7           $2.00/$6.00   lím. $15
-      # step-5-preview     $1.00/$2.70   lím. $15
-      # deepseek-v4-pro    $0.66/$1.98 off-peak, lím. $15
-      # mimo-v2.6-pro      $0.435/$0.87  lím. $15
+      # glm-5.3            $1.40/$4.40   lím. $15  razona low|high|max.
+      #                                        Más capaz que el flash.
+      # glm-5.2            $1.40/$4.40   lím. $60  razona high|max.
+      #                                        Alternativa GLM con más cupo.
+      # kimi-k3.1-pro      $2.00/$10.00  lím. $15  razona low|high|max.
+      #                                        Tope de calidad; para preguntas
+      #                                        complejas, no voz.
+      # kimi-k3            $3.00/$15.00  lím. $15  razona max
+      # qwen3.8-max        $2.00/$6.00   lím. $15  razona low|medium|xhigh
+      # qwen3.7-plus       $0.40/$1.60   lím. $60  sin niveles (≤256K tokens)
+      # gemini-4-argon     $2.00/$10.00  lím. $30  razona low|medium|high.
+      #                                        Excelente multilingüe (precio
+      #                                        con 50% de descuento).
+      # grok-4.7           $2.00/$6.00   lím. $15  razona low|medium|high|xhigh
+      # step-5-preview     $1.00/$2.70   lím. $15  razona low|medium|high
+      # deepseek-v4-pro    $0.66/$1.98 off-peak, lím. $15  razona high|max
+      # mimo-v2.6-pro      $0.435/$0.87  lím. $15  sin niveles
+      # hy4 / hy4-preview  $0.834/$2.501 lím. $60/$30  razona none|high
       #
       # ── GRATIS / PROMOCIÓN (leer condiciones antes) ──────────────────
       # beam-free          $0            ilimitado por tiempo limitado; no
       #                                  existe en varios países (Colombia sí).
+      #                                  razona low|medium|high|xhigh|max
       # iceman-contributor-free $0      ilimitado, pero ENTRENA con tus datos:
       #                                  no lo uses con conversaciones privadas.
+      #                                  sin niveles.
       # muse-spark-1.3/1.2-contributor  $0.10/$0.20: también entrenan con
       #                                  datos y tienen regiones limitadas.
+      #                                  razona minimal|low|medium|high|xhigh
       #
       # Notas:
       # - Los modelos de código/agentic (kimi-k2.7-code, etc.) no aportan
-      #   para un asistente de voz.
+      #   para un asistente de voz; kimi-k2.7-code además no publica niveles.
       # - Límites y precios pueden cambiar: https://opencode.ai/v2/docs/console/go
-      # - Listado completo y vigente:
+      # - Listado completo y vigente (incluye capabilities.reasoning.effort):
       #   GET https://opencode.ai/inference/go/v1/models
 
 

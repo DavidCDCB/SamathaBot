@@ -16,6 +16,11 @@ audio:
   blocksize: 1280
   mic_gain: null          # fija un multiplicador si tu micro es muy flojo
   normalize: true         # normaliza cada toma antes de Whisper (recomendado)
+  # Nivel de esa normalización (solo se aplica con normalize: true):
+  #   target_rms: RMS objetivo en escala 0..1 (0.10 ≈ -20 dBFS; 0.05 = más suave)
+  #   max_gain:   tope de amplificación (20x) para no amplificar solo ruido
+  normalize_target_rms: 0.10
+  normalize_max_gain: 20.0
   # "hold" = mantener la combinación de ptt_hotkey mientras hablas (modo clasico)
   # "vad"  = pulsar una vez y hablar; se corta solo al detectar silencio
   #          (usa RegisterHotKey: sin hook de teclado; "hold" usa pynput, que sí
@@ -40,6 +45,15 @@ wakeword:
   # abierto (Vosk local, sin nube) y solo se graba cuando detecta la frase.
   enabled: true
   phrase: "hola samantha"
+  # Variantes que también despiertan. Con el micro lejos Vosk suele oír
+  # "samanta"/"sananta"; el reconocedor se restringe a estas frases + [unk],
+  # lo que sube el recall y evita falsos positivos. "samantha" sola permite
+  # despertar con solo el nombre (algo más de falsos, nombre poco común).
+  aliases:
+    - "hola samanta"
+    - "samantha"
+  # small = 40 MB. Con el micro lejos el modelo completo (~1,4 GB) reconoce
+  # bastante mejor: model: "vosk-model-es-0.42" (el build lo copia igual).
   model: "vosk-model-small-es-0.42"
   no_speech_timeout: 8.0   # si no hablas en N s, cancela la toma
   max_recording_duration: 30.0  # tope duro aunque haya ruido
@@ -108,6 +122,38 @@ tts:
   # pausa entre frases. La aplica Edge (tras recortar su cola de ~0,7 s);
   # Piper no la usa.
   sentence_silence: 0.25
+
+memory:
+  enabled: true
+  # Turnos de contexto que se mandan con cada respuesta (cada turno son 2 mensajes).
+  recent_window: 80
+
+skills:
+  enabled:
+    - notes
+    - web_search
+    - wikipedia
+    - open_search
+  firecrawl:
+    timeout: 15
+    max_results: 5
+    lang: "es"
+    country: "CO"
+    fallback: "duckduckgo"
+    region: "co-es"
+
+ui:
+  # Orbe de estado: ventana pequeña que aparece al activar la conversación.
+  orb: true
+
+logging:
+  # El ARCHIVO guarda DEBUG siempre (lo usa `assistant.py report`).
+  level: "DEBUG"
+  # La CONSOLA queda limpia: solo avisos/errores. Para ver DEBUG:
+  #   python assistant.py start --debug
+  console_level: "WARNING"
+  # Relativa a la raiz del proyecto (o de la carpeta portable).
+  file: "logs/assistant.log"
 
 ai:
   # Clave del backend activo dentro de `providers` (abajo). Para cambiar de
@@ -257,36 +303,3 @@ ai:
       # - Límites y precios pueden cambiar: https://opencode.ai/v2/docs/console/go
       # - Listado completo y vigente (incluye capabilities.reasoning.effort):
       #   GET https://opencode.ai/inference/go/v1/models
-
-
-memory:
-  enabled: true
-  # Turnos de contexto que se mandan con cada respuesta (cada turno son 2 mensajes).
-  recent_window: 80
-
-skills:
-  enabled:
-    - notes
-    - web_search
-    - wikipedia
-    - open_search
-  firecrawl:
-    timeout: 15
-    max_results: 5
-    lang: "es"
-    country: "CO"
-    fallback: "duckduckgo"
-    region: "co-es"
-
-ui:
-  # Orbe de estado: ventana pequeña que aparece al activar la conversación.
-  orb: true
-
-logging:
-  # El ARCHIVO guarda DEBUG siempre (lo usa `assistant.py report`).
-  level: "DEBUG"
-  # La CONSOLA queda limpia: solo avisos/errores. Para ver DEBUG:
-  #   python assistant.py start --debug
-  console_level: "WARNING"
-  # Relativa a la raiz del proyecto (o de la carpeta portable).
-  file: "logs/assistant.log"

@@ -26,6 +26,36 @@ class NormalizeTest(unittest.TestCase):
         self.assertGreater(int(out[0]), 10)
         self.assertLessEqual(abs(int(out[0])), 20 * 10 + 1)
 
+    def test_objetivo_y_tope_configurables(self):
+        audio = np.full(1600, 328, dtype=np.int16)  # RMS ~0,010
+        out = normalize_for_stt(audio, target_rms=0.05, max_gain=4.0)
+        self.assertEqual(int(out[0]), 1312)  # 328 * 4 (manda el tope)
+
+    def test_objetivo_mas_bajo_sube_menos(self):
+        audio = np.full(1600, 328, dtype=np.int16)
+        out = normalize_for_stt(audio, target_rms=0.05)
+        self.assertAlmostEqual(int(out[0]), 1638, delta=3)  # ~5x
+
+
+class AudioConfigTest(unittest.TestCase):
+    def test_defaults_de_normalizacion(self):
+        from openocto.config import AudioConfig
+
+        c = AudioConfig()
+        self.assertTrue(c.normalize)
+        self.assertAlmostEqual(c.normalize_target_rms, 0.10)
+        self.assertAlmostEqual(c.normalize_max_gain, 20.0)
+
+    def test_assistant_config_trae_los_niveles(self):
+        from pathlib import Path
+
+        from openocto.config import load_config
+
+        raiz = Path(__file__).resolve().parents[1]
+        cfg = load_config(str(raiz / "assistant-config.yaml"))
+        self.assertAlmostEqual(cfg.audio.normalize_target_rms, 0.10)
+        self.assertAlmostEqual(cfg.audio.normalize_max_gain, 20.0)
+
 
 class SplitFraseTest(unittest.TestCase):
     def test_corta_en_punto_seguido_de_espacio(self):

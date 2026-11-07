@@ -54,6 +54,10 @@ class AudioConfig(BaseModel):
     mic_gain: float | None = None
     # normaliza la toma completa antes del STT (ver app.normalize_for_stt)
     normalize: bool = True
+    # Nivel de ganancia de esa normalización: RMS objetivo en escala 0..1 y
+    # tope de amplificación (no amplificar solo ruido). 0.10 ≈ -20 dBFS.
+    normalize_target_rms: float = Field(default=0.10, gt=0.0, le=1.0)
+    normalize_max_gain: float = Field(default=20.0, ge=1.0)
     # "hold" = mantener el atajo mientras hablas (comportamiento clasico).
     # "vad"  = una pulsacion empieza a escuchar; se corta solo al callar.
     ptt_mode: str = "hold"
@@ -229,6 +233,8 @@ class UIConfig(BaseModel):
 class WakeWordConfig(BaseModel):
     enabled: bool = False
     phrase: str = "Hola Samantha"
+    # Variantes que también despiertan (Vosk confunde con micro lejano).
+    aliases: list[str] = Field(default_factory=list)
     model: str = "vosk-model-small-es-0.42"
     # Saludo de arranque: al iniciar, la frase se envía al modelo como si
     # la hubieras dicho; Samantha responde y (en modo continuo) se queda

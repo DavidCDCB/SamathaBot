@@ -375,9 +375,14 @@ ONNX en CPU; soporta v4 (h/c) y v5 (state). Puerta rápida por RMS
 
 ### `openocto/wakeword/vosk_detector.py`
 
-Vosk en hilo propio; normaliza texto (sin tildes) y compara palabras con
-`difflib` (umbral 0,82). `WakeWordController` pausa/reanuda para no
-auto-despertarse. El callback llega al loop con `call_soon_threadsafe`.
+Vosk en hilo propio; normaliza texto (sin tildes), lo pasa a forma fonética
+(`th→t`, `h` muda, `b/v`, `s/z`) y compara palabras con `difflib` (umbral
+0,84). El reconocedor usa una **gramática restringida** a `phrase` +
+`aliases` (+ `[unk]`): con micro lejano sube el recall y evita falsos
+positivos (`_prepara_objetivos`/`_coincide`, cubiertos por
+`tests/test_wakeword.py`). `WakeWordController` pausa/reanuda para no
+auto-despertarse, expone `last_text` y el log guarda lo oído al detectar.
+El callback llega al loop con `call_soon_threadsafe`.
 
 ### `openocto/audio/`
 
@@ -441,9 +446,9 @@ Secciones y claves relevantes:
 
 | Sección | Claves |
 |---|---|
-| `audio` | `input_device`, `output_device`, `sample_rate`, `blocksize`, `mic_gain`, `normalize`, `ptt_mode` (`vad`/`hold`), `ptt_hotkey`, `continuous`, `continuous_tail_guard` |
+| `audio` | `input_device`, `output_device`, `sample_rate`, `blocksize`, `mic_gain`, `normalize`, `normalize_target_rms`, `normalize_max_gain`, `ptt_mode` (`vad`/`hold`), `ptt_hotkey`, `continuous`, `continuous_tail_guard` |
 | `vad` | `threshold`, `silence_duration`, `rms_speech_threshold`, `no_speech_timeout`, `max_recording_duration` |
-| `wakeword` | `enabled`, `phrase`, `model`, `greet_on_start`, `greet_text`, `greet_delay` |
+| `wakeword` | `enabled`, `phrase`, `aliases`, `model`, `greet_on_start`, `greet_text`, `greet_delay` |
 | `stt` | `engine`, `fallback_engine`, `fallback_after_ms`, `model_size`, `language`, `n_threads`, `hotwords`, `faster_whisper.*` |
 | `tts` | `engine`, `engines`, `edge.*`, `fallback_engine`, `fallback_cooldown`, `models`, `gain`, `length_scale`, `sentence_silence` |
 | `ai` | `default_backend`, `providers.<n>.{api_key,model,base_url,headers,no_auth,reasoning_effort,extra_body}`, `max_history`, `turn_timeout`, `max_tokens` |
@@ -489,7 +494,8 @@ Descargas (primer uso):
   `dropbox-dash/...`), cache HF en `models/faster-whisper`.
 - Piper: `huggingface.co/rhasspy/piper-voices` (`es_MX-claude-high`).
 - Silero VAD: repo `snakers4/silero-vad` (`silero_vad.onnx`, ~1,7 MB).
-- Vosk: `alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip`.
+- Vosk: `alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip` (40 MB) o
+  `vosk-model-es-0.42.zip` (~1,4 GB, mejor con micro lejano).
 
 ---
 
@@ -722,6 +728,19 @@ Los tests no descargan el modelo grande ni abren micrófono.
 - **Verificar:** `tests/test_audio_device.py`; en vivo, desconectar los
   audífonos y ver en el log `Micrófono predeterminado cambió (#x → #y)` o
   `Sin audio del micrófono…` seguido de `Micrófono reabierto`.
+
+### 12.17 La wake word no detecta con el micrófono lejos
+
+- El reconocedor usa una **gramática** con `wakeword.phrase` + `aliases`
+  (+`[unk]`) y el matcher compara en forma fonética con umbral 0,84.
+  Medido con audio sintetizado + ruido y atenuación: **2/16** aciertos con el
+  reconocedor libre vs **15/16** con gramática + matcher (y 0/12 falsos
+  positivos en frases normales).
+- Añade variantes en `wakeword.aliases` ("hola samanta", "samantha"). No bajes
+  el umbral de 0,84: "santa"/"manta" quedan en 0,83 y despertarían solas.
+- Si aún falla, usa `model: "vosk-model-es-0.42"` (~1,4 GB; el build lo copia
+  igual) y/o sube `audio.mic_gain` (se aplica antes de Vosk). El log muestra
+  `Wake word detectada: … (oído '…')` para ajustar alias.
 
 ---
 

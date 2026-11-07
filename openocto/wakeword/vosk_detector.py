@@ -22,7 +22,9 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
-_UMBRAL_PALABRA = 0.82
+# 0,84 por palabra: acepta "samanta"/"sananta" (0,86) y rechaza "santa"/"manta"
+# (0,83), que son palabras comunes y dispararían en conversación normal.
+_UMBRAL_PALABRA = 0.84
 
 
 def _palabras(texto: str) -> list[str]:
@@ -32,19 +34,80 @@ def _palabras(texto: str) -> list[str]:
     return [w for w in t.split() if w]
 
 
+def _fonetica(palabra: str) -> str:
+    """Forma laxa para comparar: colapsa confusiones típicas del ASR es/en."""
+    p = palabra.replace("th", "t").replace("ph", "f")
+    p = p.replace("ck", "k").replace("qu", "k")
+    p = p.replace("z", "s").replace("v", "b")
+    p = re.sub(r"(.)\1+", r"\1", p)  # dobles letras
+    return p.replace("h", "")  # h muda ("hola" ≈ "ola")
+
+
+def _prepara_objetivos(variantes: list[str]) -> list[list[str]]:
+    """Frases aceptadas, en forma fonética y sin duplicados."""
+    objetivos: list[list[str]] = []
+    for variante in variantes:
+        palabras = [_fonetica(w) for w in _palabras(variante)]
+        if palabras and palabras not in objetivos:
+            objetivos.append(palabras)
+    return objetivos
+
+
+def _coincide(palabras: list[str], objetivos: list[list[str]]) -> str | None:
+    """Ventana reconocida que coincide con alguna frase (texto) o None."""
+    for objetivo in objetivos:
+        n = len(objetivo)
+        if n == 0 or len(palabras) < n:
+            continue
+        for i in range(len(palabras) - n + 1):
+            ventana = palabras[i : i + n]
+            if all(
+                difflib.SequenceMatcher(None, o, p).ratio() >= _UMBRAL_PALABRA
+                for o, p in zip(objetivo, ventana)
+            ):
+                return " ".join(ventana)
+    return None
+
+
 class VoskWakeWord:
     """Reconoce la frase en el stream; no necesita entrenamiento propio."""
 
-    def __init__(self, phrase: str, model_path) -> None:
+    def __init__(
+        self, phrase: str, model_path, aliases: list[str] | None = None
+    ) -> None:
         from vosk import KaldiRecognizer, Model, SetLogLevel
 
         SetLogLevel(-1)
         self.phrase = phrase
-        self._objetivo = _palabras(phrase)
-        if not self._objetivo:
+        self._variantes = [phrase, *(aliases or [])]
+        self._objetivos = _prepara_objetivos(self._variantes)
+        if not self._objetivos:
             raise ValueError("La frase de activación está vacía")
         self._modelo = Model(str(model_path))
-        self._rec = KaldiRecognizer(self._modelo, SAMPLE_RATE)
+        self._rec = self._crea_recognizer(KaldiRecognizer)
+        self.last_text = ""  # último texto oído (para el log)
+        self.last_match = ""  # ventana que disparó
+
+    def _crea_recognizer(self, KaldiRecognizer):
+        """Reconocedor con gramática restringida a las variantes.
+
+        Vosk busca solo esas frases (+[unk]), lo que con micro lejano sube
+        mucho el recall y reduce falsos positivos. La gramática usa solo las
+        variantes de 2+ palabras: meter el nombre suelto compite con la frase
+        y empeora el reconocimiento (medido); el alias corto se acepta igual
+        en el matcher cuando Vosk solo alcanza a oír el nombre.
+        """
+        frases = [v.strip() for v in self._variantes if len(_palabras(v)) >= 2]
+        if not frases:
+            frases = [v.strip() for v in self._variantes if v.strip()]
+        gramatica = json.dumps([*frases, "[unk]"], ensure_ascii=False)
+        try:
+            return KaldiRecognizer(self._modelo, SAMPLE_RATE, gramatica)
+        except Exception as exc:
+            logger.warning(
+                "Wake word: gramática no soportada (%s); uso reconocedor libre", exc
+            )
+            return KaldiRecognizer(self._modelo, SAMPLE_RATE)
 
     def process_chunk(self, chunk: np.ndarray) -> bool:
         """True si la frase aparece en el texto parcial/final de este chunk."""
@@ -58,19 +121,14 @@ class VoskWakeWord:
         return self._contiene(texto)
 
     def _contiene(self, texto: str) -> bool:
-        palabras = _palabras(texto)
-        n = len(self._objetivo)
-        if n == 0 or len(palabras) < n:
+        self.last_text = texto
+        palabras = [_fonetica(w) for w in _palabras(texto)]
+        match = _coincide(palabras, self._objetivos)
+        if match is None:
             return False
-        for i in range(len(palabras) - n + 1):
-            ventana = palabras[i : i + n]
-            if all(
-                difflib.SequenceMatcher(None, objetivo, palabra).ratio()
-                >= _UMBRAL_PALABRA
-                for objetivo, palabra in zip(self._objetivo, ventana)
-            ):
-                return True
-        return False
+        self.last_match = match
+        logger.debug("Wake word: %r (oído %r)", match, texto)
+        return True
 
     def reset(self) -> None:
         self._rec.Reset()
@@ -92,6 +150,11 @@ class WakeWordController:
 
     def start(self) -> None:
         self._hilo.start()
+
+    @property
+    def last_text(self) -> str:
+        """Último texto que oyó Vosk (para diagnóstico)."""
+        return getattr(self._detector, "last_text", "")
 
     def feed(self, chunk: np.ndarray) -> None:
         """Llamado desde el hilo de audio; nunca bloquea."""

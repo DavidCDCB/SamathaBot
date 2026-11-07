@@ -294,6 +294,10 @@ VOSK_MODELS = {
     "vosk-model-small-es-0.42": (
         "https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip"
     ),
+    # Modelo completo: ~1,4 GB, mucho mejor con micrófono lejano.
+    "vosk-model-es-0.42": (
+        "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip"
+    ),
 }
 
 

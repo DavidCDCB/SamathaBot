@@ -570,7 +570,7 @@ class OpenOctoApp:
             )
 
             modelo = get_vosk_model(cfg.model)
-            detector = VoskWakeWord(cfg.phrase, modelo)
+            detector = VoskWakeWord(cfg.phrase, modelo, aliases=cfg.aliases)
             self._wakeword = WakeWordController(
                 detector,
                 lambda: self._loop.call_soon_threadsafe(self._on_wake_word),
@@ -602,7 +602,11 @@ class OpenOctoApp:
         self._conversation_active = bool(
             self._config.audio.continuous and self._ptt_mode == "vad"
         )
-        logger.info("Wake word detectada: %r", self._config.wakeword.phrase)
+        logger.info(
+            "Wake word detectada: %r (oído %r)",
+            self._config.wakeword.phrase,
+            self._wakeword.last_text,
+        )
         asyncio.ensure_future(self._start_recording())
 
     async def _wakeword_guard(self) -> None:
@@ -809,7 +813,11 @@ class OpenOctoApp:
             return
 
         if self._config.audio.normalize:
-            audio = normalize_for_stt(audio)
+            audio = normalize_for_stt(
+                audio,
+                target_rms=self._config.audio.normalize_target_rms,
+                max_gain=self._config.audio.normalize_max_gain,
+            )
 
         await self._handle_audio(audio)
 
